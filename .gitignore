@@ -1,0 +1,22 @@
+# 비번같은 거 공유 파일들 깃에 안 올라갈 파일 들
+
+# 보안/환경변수 
+.env
+
+# 가상환경 폴더
+.venv/
+venv/
+env/
+
+# 파이썬 캐시 파일 (의미 없는 찌꺼기 파일들)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS 시스템 파일 (맥북 찌꺼기 등)
+.DS_Store
+Thumbs.db
+
+# 에디터 설정 (개인 VS Code 설정 등)
+.vscode/
+.idea/
