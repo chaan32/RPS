@@ -1,10 +1,19 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog
+from .mqtt import MQTTHandler
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend
 import os
+
+
+async def mqtt_consumer(queue: asyncio.Queue):
+    while True:
+        data = await queue.get()
+        print(f"🛠  Consumer got: {data}")
+        # TODO: 필요 시 DB 저장 등 추가 처리
 
 
 @asynccontextmanager
@@ -19,7 +28,17 @@ async def lifespan(app: FastAPI):
             session.add_all([Maker(id=i, count=0) for i in range(1, 6)])
             await session.commit()
 
-    yield
+    # MQTT 파이프라인 시작
+    queue: asyncio.Queue = asyncio.Queue()
+    handler = MQTTHandler(queue)
+    producer_task = asyncio.create_task(handler.run())
+    consumer_task = asyncio.create_task(mqtt_consumer(queue))
+
+    try:
+        yield
+    finally:
+        producer_task.cancel()
+        consumer_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -42,7 +61,8 @@ async def send_alert(maker_id : str, direction : str):
 
     broker = os.getenv("MQTT_BROKER", "127.0.0.1")
     topic  = f"crane/{maker_id}/vibration"
-
+    if maker_id == '5' or maker_id == '4':
+        topic = f"forklift/{maker_id}/vibration"
     try:
         async with Client(broker, timeout=3) as client:
             await client.publish(topic, payload=direction)
