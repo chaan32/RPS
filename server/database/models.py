@@ -19,3 +19,10 @@ class IncidentLog(Base):
     snapshot_path   = Column(String(512), nullable=False)   # S3 object URL
     status          = Column(String(10), nullable=False)   # success / fail
     created_at      = Column(DateTime, server_default=func.now())
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    contents        = Column(String(3000), nullable=False)
+    created_at      = Column(DateTime, server_default=func.now())
