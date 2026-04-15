@@ -10,7 +10,8 @@ dependencies:
     - fastapi==0.111.0 # server
     - uvicorn==0.30.1 # web-serber ASGI
     - sqlalchemy==2.0.30 # ORM
-    - aiomysql==0.2.0 # DB driver
+    - asyncpg==0.29.0 # DB driver postgralSQL
+    - greenlet==3.0.3 # SQLAlchemy async 
     - boto3==1.34.100 # AWS connection 
     - python-dotenv==1.0.1 # project Config 
     - aiomqtt==2.3.0 # mqtt 
