@@ -15,6 +15,11 @@ class MakerResponse(BaseModel):
         from_attributes = True
 
 
+class AlertSend(BaseModel):
+    maker_id: int
+    message: str   # Warning / Danger
+
+
 class IncidentLogCreate(BaseModel):
     maker_id: int
     incident_type: str   # Warning / Danger
