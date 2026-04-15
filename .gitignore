@@ -20,3 +20,6 @@ Thumbs.db
 # 에디터 설정 (개인 VS Code 설정 등)
 .vscode/
 .idea/
+
+# 클로드 설정 
+.claude
