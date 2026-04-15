@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog
-from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse
+from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend
 import os
 
 
@@ -10,6 +11,14 @@ import os
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # 최초 실행 시 Maker 5개 시드
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Maker))
+        if not result.scalars().first():
+            session.add_all([Maker(id=i, count=0) for i in range(1, 6)])
+            await session.commit()
+
     yield
 
 
@@ -19,6 +28,27 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 def read_root():
     return {"Hello": "FastAPI", "Status": "Running"}
+
+
+# ── MQTT Send ─────────────────────────────────────────────────────────
+
+@app.post("/send-alert")
+async def send_alert(maker_id : str, direction : str):
+    """
+    server->arduino by MQTT pipeline
+    
+    topic: crane/{maker_id}/vibration
+    """
+
+    broker = os.getenv("MQTT_BROKER", "127.0.0.1")
+    topic  = f"crane/{maker_id}/vibration"
+
+    try:
+        async with Client(broker, timeout=3) as client:
+            await client.publish(topic, payload=direction)
+        return {"status": "success", "topic": topic, "message": direction}
+    except MqttError as e:
+        return {"status": "fail", "error": str(e)}
 
 
 # ── Maker ──────────────────────────────────────────────────────────────
