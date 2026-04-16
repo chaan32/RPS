@@ -3,9 +3,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from aiomqtt import Client, MqttError
 from sqlalchemy import select
-from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog
+from datetime import date as date_cls
+from fastapi import HTTPException, Query
+from fastapi.responses import HTMLResponse
+from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
 from .mqtt import MQTTHandler
-from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend
+from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
+from .report import generate_daily_report
 import os
 
 
@@ -109,6 +113,69 @@ async def get_incident_logs():
         result = await session.execute(select(IncidentLog))
         logs = result.scalars().all()
     return logs
+
+
+# ── Report ─────────────────────────────────────────────────────────────
+
+@app.post("/reports/generate", response_model=ReportResponse)
+async def create_daily_report(target_date: date_cls | None = Query(default=None, description="YYYY-MM-DD (KST). 생략 시 오늘")):
+    """
+    수동 트리거: 지정 날짜(KST)의 IncidentLog를 모아 LLM에 요약시키고 Report로 저장.
+    """
+    try:
+        report = await generate_daily_report(target_date)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return report
+
+
+@app.get("/reports", response_model=list[ReportResponse])
+async def list_reports():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Report).order_by(Report.created_at.desc()))
+        return result.scalars().all()
+
+
+@app.get("/reports/{report_id}/html", response_class=HTMLResponse)
+async def get_report_html(report_id: int):
+    """Report contents를 브라우저에서 바로 HTML로 렌더링."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Report).where(Report.id == report_id))
+        report = result.scalars().first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    page = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Report - {report.date}</title>
+    <style>
+        body {{ font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f9f9f9; color: #333; }}
+        h2 {{ color: #1a1a2e; border-bottom: 2px solid #e94560; padding-bottom: 8px; }}
+        h3 {{ color: #16213e; margin-top: 24px; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 10px 12px; text-align: left; }}
+        th {{ background: #16213e; color: #fff; }}
+        tr:nth-child(even) {{ background: #f2f2f2; }}
+        ul {{ line-height: 1.8; }}
+        p {{ line-height: 1.6; }}
+
+        /* 스냅샷 2열 그리드 */
+        .snapshot-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }}
+        .snapshot-card {{ padding: 10px; border: 1px solid #eee; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+        .snapshot-card img {{ width: 100%; height: 220px; object-fit: cover; border: 2px solid #e94560; border-radius: 6px; display: block; }}
+        .snapshot-card p {{ margin: 8px 0 0; font-size: 0.9em; color: #555; }}
+    </style>
+</head>
+<body>
+{report.contents}
+</body>
+</html>"""
+    return HTMLResponse(content=page)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, func, ForeignKey
 from .base import Base
 
 
@@ -24,5 +24,6 @@ class Report(Base):
     __tablename__ = "reports"
 
     id              = Column(Integer, primary_key=True, index=True)
-    contents        = Column(String(3000), nullable=False)
+    contents        = Column(Text, nullable=False)
+    date            = Column(Date, nullable=False)
     created_at      = Column(DateTime, server_default=func.now())

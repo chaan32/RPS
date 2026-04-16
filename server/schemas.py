@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import date, datetime
 
 
 class MakerCreate(BaseModel):
@@ -33,6 +33,16 @@ class IncidentLogResponse(BaseModel):
     incident_type: str
     snapshot_path: str
     status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReportResponse(BaseModel):
+    id: int
+    contents: str
+    date: date
     created_at: datetime
 
     class Config:
