@@ -21,7 +21,7 @@ class MQTTHandler:
                     # subscribe all topics 
                     for topic in self.topics:
                         await client.subscribe(topic)
-                        print(f"✅ Subscribed to: {topic}")
+            
 
                     # 🚨 async with 줄을 삭제하고 바로 async for 로 진입합니다!
                     async for message in client.messages:

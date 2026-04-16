@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, func, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, func, ForeignKey
 from .base import Base
 
 
@@ -18,4 +18,12 @@ class IncidentLog(Base):
     incident_type   = Column(String(10), nullable=False)   # Warning, Danger
     snapshot_path   = Column(String(512), nullable=False)   # S3 object URL
     status          = Column(String(10), nullable=False)   # success / fail
+    created_at      = Column(DateTime, server_default=func.now())
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    contents        = Column(Text, nullable=False)
+    date            = Column(Date, nullable=False)
     created_at      = Column(DateTime, server_default=func.now())
