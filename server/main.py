@@ -1,10 +1,12 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from datetime import datetime
+from fastapi import FastAPI, UploadFile, File
 from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog
 from .mqtt import MQTTHandler
+from .s3 import upload_file
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend
 import os
 
@@ -91,7 +93,30 @@ async def get_makers():
     return makers
 
 
-# ── IncidentLog ────────────────────────────────────────────────────────
+# ── IncidentLog + S3 ───────────────────────────────────────────────────
+
+@app.post("/incident-logs/with-snapshot", response_model=IncidentLogResponse)
+async def create_incident_with_snapshot(
+    maker_id: int,
+    incident_type: str,
+    file: UploadFile = File(...),
+):
+    contents = await file.read()
+    today = datetime.now().strftime("%Y-%m-%d")
+    key = f"snapshots/{today}/{file.filename}"
+    url = upload_file(contents, key, content_type=file.content_type)
+
+    async with AsyncSessionLocal() as session:
+        log = IncidentLog(
+            maker_id=maker_id,
+            incident_type=incident_type,
+            snapshot_path=url,
+            status="success",
+        )
+        session.add(log)
+        await session.commit()
+        await session.refresh(log)
+    return log
 
 @app.post("/incident-logs", response_model=IncidentLogResponse)
 async def create_incident_log(body: IncidentLogCreate):
