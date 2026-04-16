@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from datetime import date as date_cls
@@ -10,7 +11,6 @@ from fastapi.responses import HTMLResponse
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
 from .mqtt import MQTTHandler
 from .s3 import upload_file
-from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
 import os
@@ -49,6 +49,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/")

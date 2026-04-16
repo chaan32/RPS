@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { fetchReports, sendAlert } from '../api';
+import type { Report } from '../api';
 
 // === Mock Data ===
 const lineChartData = [
@@ -52,8 +54,38 @@ export default function DailyAdminDashboard() {
 
   const [profiles, setProfiles] = useState(initialProfiles);
 
-  // === 일자별 기록 뷰 HTML 초기값 (오버플로우 테스트용 큰 문자열 생성) ===
-  const [reportHtml, setReportHtml] = useState(Array(100).fill('Hello, world<br/>').join(''));
+  // === 일자별 기록 뷰: 서버 리포트 연동 ===
+  const [reports, setReports] = useState<Report[]>([]);
+  const [reportHtml, setReportHtml] = useState('');
+  const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'error' | 'ok'>('loading');
+
+  useEffect(() => {
+    fetchReports()
+      .then((data) => {
+        setReports(data);
+        const matched = data.find((r) => r.date === selectedDate);
+        if (matched) {
+          setReportHtml(matched.contents);
+          setReportStatus('ok');
+        } else {
+          setReportStatus('empty');
+        }
+      })
+      .catch(() => {
+        setReportStatus('error');
+      });
+  }, []);
+
+  // 날짜 변경 시 해당 날짜 리포트로 전환
+  useEffect(() => {
+    const matched = reports.find((r) => r.date === selectedDate);
+    if (matched) {
+      setReportHtml(matched.contents);
+      setReportStatus('ok');
+    } else if (reports.length > 0 || reportStatus !== 'loading') {
+      setReportStatus('empty');
+    }
+  }, [selectedDate, reports]);
 
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -62,9 +94,18 @@ export default function DailyAdminDashboard() {
     setExpandedProfileId(prevId => (prevId === id ? null : id));
   };
 
-  // 진동 수동 조작 기능 (Mock API 연결용)
-  const handleVibration = (makerId: string, direction: string) => {
-    console.log(`[${makerId}] '${direction}' 진동 신호 전송`);
+  // 진동 수동 조작 기능 (서버 API 연동)
+  const handleVibration = async (makerId: string, direction: string) => {
+    try {
+      const result = await sendAlert(makerId, direction);
+      if (result.status === 'success') {
+        alert(`[작업자 ${makerId}] '${direction}' 진동 신호 전송 성공`);
+      } else {
+        alert(`진동 신호 전송 실패: ${JSON.stringify(result)}`);
+      }
+    } catch (err) {
+      alert('서버 연결 실패. 서버가 실행 중인지 확인하세요.');
+    }
   };
 
   // PDF 출력 기능 연동
@@ -344,22 +385,72 @@ export default function DailyAdminDashboard() {
                   </div>
                 </div>
 
-                {/* HTML 컨테이너 렌더링 영역 (dangerouslySetInnerHTML) */}
-                <div
-                  className="flex-1 w-full bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-300 p-8 overflow-y-auto print-container min-h-0 mt-4 font-semibold text-slate-500 leading-relaxed"
-                  dangerouslySetInnerHTML={{ __html: reportHtml }}
-                ></div>
+                {/* 콘텐츠 영역: 상태에 따라 분기 */}
+                {reportStatus === 'ok' ? (
+                  <>
+                    <div
+                      className="flex-1 w-full bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-300 p-8 overflow-y-auto print-container min-h-0 mt-4 font-semibold text-slate-500 leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: reportHtml }}
+                    ></div>
+                    <div className="absolute bottom-10 right-10 z-10">
+                      <button
+                        onClick={handleDownloadPdf}
+                        className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-[1.25rem] shadow-xl hover:shadow-blue-500/40 transition-all font-black tracking-wide text-[15px] group ring-4 ring-blue-500/10"
+                      >
+                        <Download size={22} className="group-hover:-translate-y-1 transition-transform" />
+                        PDF 리포트 저장
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center mt-4 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/30">
+                    {/* 일러스트 SVG */}
+                    <svg width="180" height="160" viewBox="0 0 180 160" fill="none" className="mb-6 opacity-80">
+                      {/* 빈 문서 */}
+                      <rect x="50" y="20" width="80" height="105" rx="8" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2"/>
+                      <rect x="50" y="20" width="80" height="105" rx="8" fill="url(#docGrad)" stroke="#cbd5e1" strokeWidth="2"/>
+                      {/* 접힌 모서리 */}
+                      <path d="M110 20 L130 20 L130 40 Z" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1.5" strokeLinejoin="round"/>
+                      <path d="M110 20 L110 40 L130 40" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="1.5" strokeLinejoin="round"/>
+                      {/* 텍스트 라인 placeholder */}
+                      <rect x="66" y="52" width="48" height="5" rx="2.5" fill="#cbd5e1" opacity="0.7"/>
+                      <rect x="66" y="64" width="38" height="5" rx="2.5" fill="#cbd5e1" opacity="0.5"/>
+                      <rect x="66" y="76" width="44" height="5" rx="2.5" fill="#cbd5e1" opacity="0.4"/>
+                      <rect x="66" y="88" width="30" height="5" rx="2.5" fill="#cbd5e1" opacity="0.3"/>
+                      {/* 돋보기 */}
+                      <circle cx="128" cy="100" r="20" fill="none" stroke="#94a3b8" strokeWidth="3" opacity="0.6"/>
+                      <line x1="142" y1="114" x2="156" y2="128" stroke="#94a3b8" strokeWidth="4" strokeLinecap="round" opacity="0.6"/>
+                      {/* 물음표 */}
+                      <text x="122" y="107" textAnchor="middle" fontSize="20" fontWeight="800" fill="#94a3b8" opacity="0.7">?</text>
+                      <defs>
+                        <linearGradient id="docGrad" x1="50" y1="20" x2="130" y2="125">
+                          <stop offset="0%" stopColor="#f8fafc"/>
+                          <stop offset="100%" stopColor="#e2e8f0"/>
+                        </linearGradient>
+                      </defs>
+                    </svg>
 
-                {/* 하단 우측 PDF 출력 버튼 */}
-                <div className="absolute bottom-10 right-10 z-10">
-                  <button
-                    onClick={handleDownloadPdf}
-                    className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-[1.25rem] shadow-xl hover:shadow-blue-500/40 transition-all font-black tracking-wide text-[15px] group ring-4 ring-blue-500/10"
-                  >
-                    <Download size={22} className="group-hover:-translate-y-1 transition-transform" />
-                    PDF 리포트 저장
-                  </button>
-                </div>
+                    {reportStatus === 'loading' ? (
+                      <>
+                        <p className="text-lg font-black text-slate-400 tracking-tight">리포트를 불러오는 중...</p>
+                        <p className="text-sm font-semibold text-slate-300 mt-2">서버에서 데이터를 가져오고 있습니다</p>
+                      </>
+                    ) : reportStatus === 'error' ? (
+                      <>
+                        <p className="text-lg font-black text-red-400 tracking-tight">서버 연결 실패</p>
+                        <p className="text-sm font-semibold text-slate-400 mt-2">백엔드 서버가 실행 중인지 확인해주세요</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-black text-slate-400 tracking-tight">해당 날짜의 리포트가 없습니다</p>
+                        <p className="text-sm font-semibold text-slate-300 mt-2">
+                          <span className="text-blue-400 font-bold">{selectedDate}</span> 에 생성된 기록이 존재하지 않습니다
+                        </p>
+                        <p className="text-xs font-semibold text-slate-300 mt-1">다른 날짜를 선택하거나, 리포트를 먼저 생성해주세요</p>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -398,13 +489,18 @@ export default function DailyAdminDashboard() {
                       </div>
 
                       <div className="flex items-center gap-3">
-                        {['왼쪽', '오른쪽', '등', '전부'].map((dir) => (
+                        {[
+                          { label: '왼쪽', value: 'left' },
+                          { label: '오른쪽', value: 'right' },
+                          { label: '등', value: 'back' },
+                          { label: '전부', value: 'all' },
+                        ].map((dir) => (
                           <button
-                            key={dir}
-                            onClick={() => handleVibration(`작업자 ${id}`, dir)}
+                            key={dir.value}
+                            onClick={() => handleVibration(String(id), dir.value)}
                             className="px-5 py-3 min-w-[80px] rounded-xl text-[15px] font-bold text-slate-700 bg-white border border-slate-300 shadow-sm hover:text-white hover:bg-purple-600 hover:border-purple-600 hover:shadow-lg hover:shadow-purple-500/30 active:scale-95 active:bg-purple-700 transition-all duration-200"
                           >
-                            {dir}
+                            {dir.label}
                           </button>
                         ))}
                       </div>

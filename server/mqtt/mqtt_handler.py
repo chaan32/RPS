@@ -34,8 +34,8 @@ class MQTTHandler:
                         print(f"📩 Queue In: {data}")
                         
             except MqttError as e:
-                print(f"❌ MQTT Fail: {e}")
-                await asyncio.sleep(5)
+                print(f"❌ MQTT 브로커 연결 실패 — 30초 후 재시도 ({e})")
+                await asyncio.sleep(30)
             except Exception as e:
                 print(f"⚠️ Unexpected Error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(30)
