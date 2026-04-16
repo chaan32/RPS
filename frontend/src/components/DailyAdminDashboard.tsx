@@ -490,10 +490,10 @@ export default function DailyAdminDashboard() {
 
                       <div className="flex items-center gap-3">
                         {[
-                          { label: '왼쪽', value: 'left' },
-                          { label: '오른쪽', value: 'right' },
-                          { label: '등', value: 'back' },
-                          { label: '전부', value: 'all' },
+                          { label: 'LEFT', value: 'left' },
+                          { label: 'RIGHT', value: 'right' },
+                          { label: 'BACK', value: 'back' },
+                          { label: 'ALL', value: 'all' },
                         ].map((dir) => (
                           <button
                             key={dir.value}
