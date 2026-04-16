@@ -34,15 +34,15 @@ const lineChartData = [
 ];
 
 const initialProfiles = [
-  { id: 1, name: "김현수", score: 85, violations: ["크레인 드롭존 침범 1회", "지게차 접근 경고 1회"] },
-  { id: 2, name: "전성은", score: 95, violations: ["지게차 사각지대 진입 1회"] },
-  { id: 3, name: "박동준", score: 70, violations: ["크레인 파단음 구역 이탈 지연 1회", "사각지대 진입 2회"] },
-  { id: 4, name: "이민기", score: 60, violations: ["크레인 작업 반경 내 보행 2회", "교차로 지게차 충돌 경보 1회"] },
-  { id: 5, name: "최수정", score: 100, violations: [] }
+  { id: 1, name: "작업자 1", score: 85, violations: ["크레인 드롭존 침범 1회", "지게차 접근 경고 1회"] },
+  { id: 2, name: "작업자 2", score: 95, violations: ["지게차 사각지대 진입 1회"] },
+  { id: 3, name: "작업자 3", score: 70, violations: ["크레인 파단음 구역 이탈 지연 1회", "사각지대 진입 2회"] },
+  { id: 4, name: "작업자 4", score: 60, violations: ["크레인 작업 반경 내 보행 2회", "교차로 지게차 충돌 경보 1회"] },
+  { id: 5, name: "작업자 5", score: 100, violations: [] }
 ];
 
 export default function DailyAdminDashboard() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'records'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'records' | 'vibration'>('dashboard');
 
   // === 전역(Global) 상태 및 헤더(Top Panel) 연동 ===
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
@@ -60,6 +60,11 @@ export default function DailyAdminDashboard() {
   // 아코디언 토글 함수
   const toggleAccordion = (id: number) => {
     setExpandedProfileId(prevId => (prevId === id ? null : id));
+  };
+
+  // 진동 수동 조작 기능 (Mock API 연결용)
+  const handleVibration = (makerId: string, direction: string) => {
+    console.log(`[${makerId}] '${direction}' 진동 신호 전송`);
   };
 
   // PDF 출력 기능 연동
@@ -116,6 +121,15 @@ export default function DailyAdminDashboard() {
                 }`}
             >
               <FileText size={20} /> 일자별 기록
+            </button>
+            <button
+              onClick={() => setActiveTab('vibration')}
+              className={`w-full flex items-center gap-3 px-5 py-4 rounded-2xl text-[15px] font-bold transition-all duration-200 ${activeTab === 'vibration'
+                  ? 'bg-purple-50 text-purple-700 shadow-sm border border-purple-100 ring-2 ring-purple-500/10'
+                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 border border-transparent'
+                }`}
+            >
+              <Radio size={20} /> 진동 수동 조작
             </button>
           </nav>
         </div>
@@ -345,6 +359,57 @@ export default function DailyAdminDashboard() {
                     <Download size={22} className="group-hover:-translate-y-1 transition-transform" />
                     PDF 리포트 저장
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =====================================================
+              페이지 3: 진동 수동 조작 뷰
+              ===================================================== */}
+          {activeTab === 'vibration' && (
+            <div className="max-w-[1400px] mx-auto flex flex-col animate-in fade-in duration-500 mb-10">
+              <div className="bg-white rounded-[2rem] p-10 border border-slate-200 shadow-sm flex flex-col">
+                <div className="mb-8 pb-6 border-b border-slate-100 flex justify-between items-center shrink-0">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+                      <Radio size={28} className="text-purple-600" />
+                      작업자 진동 수동 조작
+                    </h3>
+                    <p className="text-[15px] text-slate-500 mt-2 font-semibold">
+                      각 작업자별 스마트 안전조끼 진동 모터를 수동으로 작동시켜 신호를 전달할 수 있습니다.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col space-y-4">
+                  {[1, 2, 3, 4, 5].map((id) => (
+                    <div key={id} className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl transition-colors duration-200 group">
+                      <div className="flex items-center gap-5 mb-4 md:mb-0">
+                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-200 overflow-hidden shrink-0 group-hover:scale-110 transition-transform">
+                          <Radio size={20} className="text-slate-500 group-hover:text-purple-600 transition-colors" />
+                        </div>
+                        <div>
+                          <h4 className="text-lg font-black text-slate-800 tracking-tight">작업자 {id}</h4>
+                          <p className="text-[14px] font-bold text-slate-500 mt-0.5">
+                            상태: <span className="text-emerald-500">정상 (Connected)</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {['왼쪽', '오른쪽', '등', '전부'].map((dir) => (
+                          <button
+                            key={dir}
+                            onClick={() => handleVibration(`작업자 ${id}`, dir)}
+                            className="px-5 py-3 min-w-[80px] rounded-xl text-[15px] font-bold text-slate-700 bg-white border border-slate-300 shadow-sm hover:text-white hover:bg-purple-600 hover:border-purple-600 hover:shadow-lg hover:shadow-purple-500/30 active:scale-95 active:bg-purple-700 transition-all duration-200"
+                          >
+                            {dir}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
