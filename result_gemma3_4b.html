@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>gemma3:4b 리포트 테스트</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .meta { color: #666; margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; padding-bottom: 1rem; }
+  .snapshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 1rem; }
+  .snapshot-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem; text-align: center; }
+  .snapshot-card img { max-width: 100%; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+  th { background: #f5f5f5; }
+</style>
+</head>
+<body>
+<div class="meta">
+  <strong>모델:</strong> gemma3:4b | <strong>소요 시간:</strong> 149.7초 | <strong>HTML 길이:</strong> 1719자
+</div>
+<div class="report-container">
+  <h2>2026-04-17 (Asia/Seoul) - 산업 현장 안전 관제 리포트</h2>
+  <p>총 이벤트 수: 8건</p>
+  <p>Warning: 3건, Danger: 5건</p>
+
+  <h3>Maker별 발생 현황</h3>
+  <table border="1">
+    <thead>
+      <tr>
+        <th>Maker ID</th>
+        <th>발생 횟수</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>CRANE-01</td>
+        <td>3</td>
+      </tr>
+      <tr>
+        <td>FORKLIFT-04</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>CONVEYOR-02</td>
+        <td>3</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>주목할 패턴</h3>
+  <ul>
+    <li>CRANE-01 Maker의 Danger 발생이 집중 (3건)</li>
+    <li>오전 시간대에 Danger 발생 빈도가 높음</li>
+  </ul>
+
+  <p>CRANE-01 Maker의 Danger 발생 빈도를 줄이기 위한 추가적인 모니터링 및 안전 점검이 필요합니다. 또한, 문제 발생 시간대를 분석하여 예방 조치를 강화할 필요가 있습니다.</p>
+
+  <h3>위험 상황 스냅샷</h3>
+  <div class="snapshot-grid">
+    <div class="snapshot-card">
+      <img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger" alt="CRANE-01 - 시각 - Danger" />
+      <p>Maker ID: CRANE-01, 시각: 2026-04-17T04:15:00, 유형: Danger</p>
+    </div>
+    <div class="snapshot-card">
+      <img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger2" alt="CRANE-01 - 시각 - Danger" />
+      <p>Maker ID: CRANE-01, 시각: 2026-04-17T04:22:00, 유형: Danger</p>
+    </div>
+    <div class="snapshot-card">
+      <img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger3" alt="CRANE-01 - 시각 - Danger" />
+      <p>Maker ID: CRANE-01, 시각: 2026-04-17T14:30:00, 유형: Danger</p>
+    </div>
+    <div class="snapshot-card">
+      <img src="https://placehold.co/320x240/red/white?text=FORK-04+Danger" alt="FORKLIFT-04 - 시각 - Danger" />
+      <p>Maker ID: FORKLIFT-04, 시각: 2026-04-17T06:05:00, 유형: Danger</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>
