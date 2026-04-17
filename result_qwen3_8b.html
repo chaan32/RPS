@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>qwen3:8b 리포트 테스트</title>
+<style>
+  body { font-family: 'Malgun Gothic', sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .meta { color: #666; margin-bottom: 1.5rem; border-bottom: 1px solid #ddd; padding-bottom: 1rem; }
+  .snapshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-top: 1rem; }
+  .snapshot-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem; text-align: center; }
+  .snapshot-card img { max-width: 100%; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+  th { background: #f5f5f5; }
+</style>
+</head>
+<body>
+<div class="meta">
+  <strong>모델:</strong> qwen3:8b | <strong>소요 시간:</strong> 513.0초 | <strong>HTML 길이:</strong> 1612자
+</div>
+<div>
+  <h1>2026-04-17 산업 안전 사고/경고 요약</h1>
+  <p><strong>총 이벤트 수:</strong> 8 | <strong>경고(WARNING):</strong> 4 | <strong>위험(DANGER):</strong> 4</p>
+  <table border="1">
+    <tr><th>설비 ID</th><th>총 발생 건수</th><th>경고(W)</th><th>위험(D)</th></tr>
+    <tr><td>CRANE-01</td><td>4</td><td>1</td><td>3</td></tr>
+    <tr><td>FORKLIFT-04</td><td>2</td><td>1</td><td>1</td></tr>
+    <tr><td>CONVEYOR-02</td><td>2</td><td>2</td><td>0</td></tr>
+  </table>
+  <ul>
+    <li>위험 사고가 오전 1~3시(UTC+9)에 집중적으로 발생</li>
+    <li>CRANE-01이 3건의 위험 사고로 가장 높은 비중 차지</li>
+    <li>오전 1시 15분~오후 3시 사이 4건의 위험 사고 발생</li>
+  </ul>
+  <p>CRANE-01의 반복적 위험 사고에 대한 점검 및 작업 시간대 조정이 필요합니다.</p>
+  <h3>위험 상황 스냅샷</h3>
+  <div class="snapshot-grid">
+    <div class="snapshot-card"><img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger" alt="Maker CRANE-01 - 2026-04-17 04:15:00 - Danger"><p>Maker ID: CRANE-01, 시각: 2026-04-17 04:15:00, 유형: Danger</p></div>
+    <div class="snapshot-card"><img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger2" alt="Maker CRANE-01 - 2026-04-17 04:22:00 - Danger"><p>Maker ID: CRANE-01, 시각: 2026-04-17 04:22:00, 유형: Danger</p></div>
+    <div class="snapshot-card"><img src="https://placehold.co/320x240/red/white?text=FORK-04+Danger" alt="Maker FORKLIFT-04 - 2026-04-17 06:05:00 - Danger"><p>Maker ID: FORKLIFT-04, 시각: 2026-04-17 06:05:00, 유형: Danger</p></div>
+    <div class="snapshot-card"><img src="https://placehold.co/320x240/red/white?text=CRANE-01+Danger3" alt="Maker CRANE-01 - 2026-04-17 14:30:00 - Danger"><p>Maker ID: CRANE-01, 시각: 2026-04-17 14:30:00, 유형: Danger</p></div>
+  </div>
+</div>
+</body>
+</html>
