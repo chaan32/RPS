@@ -1,0 +1,8 @@
+path: C:/Users/niced/Desktop/dataset
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: forklift
+  1: hoist  
