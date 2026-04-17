@@ -16,12 +16,41 @@ import {
   Eye,
   ChevronDown
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import { toPng } from 'html-to-image';
+import jsPDF from 'jspdf';
 import { fetchReports, sendAlert } from '../api';
 import type { Report } from '../api';
 
 // === Mock Data ===
+const USE_MOCK_DATA = true;
+
+const MOCK_INCIDENTS = [
+  {
+    time: '2026-04-17 14:32:05',
+    worker: '작업자 1 - 김현수',
+    event: '크레인 위험 구역 접근 감지',
+    action: '안전모 진동 경고 발송 완료',
+    severity: '높음',
+    severityColor: 'bg-red-50 text-red-600 border-red-200',
+  },
+  {
+    time: '2026-04-17 10:15:22',
+    worker: '작업자 3 - 박상범',
+    event: '크레인 파단음 구역 이탈 지연',
+    action: '현장 스피커 대피 방송 송출 (2회)',
+    severity: '위험',
+    severityColor: 'bg-rose-50 text-rose-600 border-rose-200',
+  },
+  {
+    time: '2026-04-17 08:45:10',
+    worker: '작업자 2 - 이철수',
+    event: '지게차 이동 경로 사각지대 침범',
+    action: '스마트 조끼 경고(우측 진동)',
+    severity: '주의',
+    severityColor: 'bg-amber-50 text-amber-600 border-amber-200',
+  }
+];
+
 const lineChartData = [
   { time: '09:00', count: 2 },
   { time: '10:00', count: 5 },
@@ -60,6 +89,10 @@ export default function DailyAdminDashboard() {
   const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'error' | 'ok'>('loading');
 
   useEffect(() => {
+    if (USE_MOCK_DATA) {
+      setReportStatus('ok');
+      return;
+    }
     fetchReports()
       .then((data) => {
         setReports(data);
@@ -78,6 +111,10 @@ export default function DailyAdminDashboard() {
 
   // 날짜 변경 시 해당 날짜 리포트로 전환
   useEffect(() => {
+    if (USE_MOCK_DATA) {
+      setReportStatus('ok');
+      return;
+    }
     const matched = reports.find((r) => r.date === selectedDate);
     if (matched) {
       setReportHtml(matched.contents);
@@ -110,19 +147,35 @@ export default function DailyAdminDashboard() {
 
   // PDF 출력 기능 연동
   const handleDownloadPdf = async () => {
-    if (!reportRef.current) return;
+    const target = reportRef.current || document.getElementById('pdf-zone');
+    if (!target) {
+      console.error("PDF 변환 에러: 타겟 DOM 요소를 찾을 수 없습니다.");
+      return;
+    }
+
     try {
-      const canvas = await html2canvas(reportRef.current, { scale: 2, useCORS: true });
-      const imgData = canvas.toDataURL('image/png');
+      const filter = (node: HTMLElement) => {
+        return node.getAttribute ? node.getAttribute('data-html2canvas-ignore') !== 'true' : true;
+      };
+
+      const htmlToImageTarget = target as HTMLElement;
+      const imgData = await toPng(htmlToImageTarget, { 
+        cacheBust: true, 
+        pixelRatio: 2, 
+        filter,
+        backgroundColor: '#ffffff',
+        style: { padding: '24px' }
+      });
+      
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const pdfHeight = (htmlToImageTarget.offsetHeight * pdfWidth) / htmlToImageTarget.offsetWidth;
 
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`safety_report_${selectedDate}.pdf`);
+      pdf.save(`${selectedDate}_SafeAI_안전사고_기록부.pdf`);
     } catch (error) {
-      console.error('PDF 다운로드 에러:', error);
-      alert('PDF 변환 중 문제가 발생했습니다.');
+      console.error("PDF 변환 에러 상세:", error);
+      alert('PDF 변환 중 문제가 발생했습니다. 브라우저 개발자 도구를 확인해 주세요.');
     }
   };
 
@@ -369,7 +422,6 @@ export default function DailyAdminDashboard() {
             <div className="max-w-[1400px] mx-auto h-[calc(100vh-160px)] flex flex-col animate-in fade-in duration-500">
 
               <div
-                ref={reportRef}
                 className="flex-1 bg-white rounded-[2rem] p-10 border border-slate-200 shadow-sm relative flex flex-col min-h-0"
               >
                 <div className="mb-6 pb-6 border-b border-slate-100 flex justify-between items-center shrink-0">
@@ -380,27 +432,75 @@ export default function DailyAdminDashboard() {
                     </h3>
                     <p className="text-[15px] text-slate-500 mt-2 font-semibold">데이터베이스에서 동기화된 리포트 원본 HTML 컨테이너입니다.</p>
                   </div>
-                  <div className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 h-fit">
-                    {selectedDate} ARCHIVE
+                  <div className="flex items-center gap-3">
+                    <div className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 h-fit">
+                      {selectedDate} ARCHIVE
+                    </div>
+                    <button
+                      onClick={handleDownloadPdf}
+                      disabled={reportStatus !== 'ok'}
+                      data-html2canvas-ignore="true"
+                      className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold transition-all text-sm h-fit ${
+                        reportStatus === 'ok'
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-blue-500/30 ring-2 ring-blue-500/20'
+                          : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <Download size={18} />
+                      PDF 다운로드
+                    </button>
                   </div>
                 </div>
 
                 {/* 콘텐츠 영역: 상태에 따라 분기 */}
                 {reportStatus === 'ok' ? (
                   <>
-                    <div
-                      className="flex-1 w-full bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-300 p-8 overflow-y-auto print-container min-h-0 mt-4 font-semibold text-slate-500 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: reportHtml }}
-                    ></div>
-                    <div className="absolute bottom-10 right-10 z-10">
-                      <button
-                        onClick={handleDownloadPdf}
-                        className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-8 py-4 rounded-[1.25rem] shadow-xl hover:shadow-blue-500/40 transition-all font-black tracking-wide text-[15px] group ring-4 ring-blue-500/10"
-                      >
-                        <Download size={22} className="group-hover:-translate-y-1 transition-transform" />
-                        PDF 리포트 저장
-                      </button>
-                    </div>
+                    {USE_MOCK_DATA ? (
+                      <div className="flex-1 w-full bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-300 p-8 overflow-y-auto print-container min-h-0 mt-4 h-full">
+                        <div ref={reportRef} id="pdf-zone" className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                          <div className="p-6 border-b border-slate-100 mb-2">
+                            <h2 className="text-xl font-extrabold text-slate-800">일일 안전 사고 증적 리포트 - {selectedDate}</h2>
+                            <p className="text-sm font-bold text-slate-500 mt-1">현장 스마트 안전 관리 시스템 자동 생성 요약</p>
+                          </div>
+                          <div className="p-6 space-y-4">
+                            {MOCK_INCIDENTS.map((inc, i) => (
+                              <div key={i} className="flex flex-col border border-slate-200 rounded-xl p-5 bg-slate-50 shadow-sm relative">
+                                <div className="flex justify-between items-center mb-4">
+                                  <div className="flex items-center gap-2">
+                                    <AlertTriangle size={18} className="text-slate-400" />
+                                    <span className="font-bold text-slate-500 text-sm">{inc.time}</span>
+                                  </div>
+                                  <span className={`px-3 py-1 text-xs font-black rounded-lg border ${inc.severityColor}`}>
+                                    {inc.severity}
+                                  </span>
+                                </div>
+                                <div className="space-y-2">
+                                  <div className="flex text-[15px]">
+                                    <span className="font-black text-slate-600 w-28 shrink-0">관련 작업자 :</span>
+                                    <span className="font-bold text-slate-800">{inc.worker}</span>
+                                  </div>
+                                  <div className="flex text-[15px]">
+                                    <span className="font-black text-slate-600 w-28 shrink-0">이벤트 내용 :</span>
+                                    <span className="font-bold text-red-500">{inc.event}</span>
+                                  </div>
+                                  <div className="flex text-[15px]">
+                                    <span className="font-black text-slate-600 w-28 shrink-0">조치 결과 :</span>
+                                    <span className="font-bold text-blue-600">{inc.action}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        ref={reportRef}
+                        id="pdf-zone"
+                        className="flex-1 w-full bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-300 p-8 overflow-y-auto print-container min-h-0 mt-4 font-semibold text-slate-500 leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: reportHtml }}
+                      ></div>
+                    )}
                   </>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center mt-4 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/30">
