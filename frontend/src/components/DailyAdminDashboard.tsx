@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
-import { fetchReports, sendAlert } from '../api';
+import { fetchReports, generateReport, sendAlert } from '../api';
 import type { Report } from '../api';
 
 // === Mock Data ===
@@ -86,7 +86,7 @@ export default function DailyAdminDashboard() {
   // === 일자별 기록 뷰: 서버 리포트 연동 ===
   const [reports, setReports] = useState<Report[]>([]);
   const [reportHtml, setReportHtml] = useState('');
-  const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'error' | 'ok'>('loading');
+  const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'generating' | 'error' | 'ok'>('loading');
 
   useEffect(() => {
     if (USE_MOCK_DATA) {
@@ -123,6 +123,18 @@ export default function DailyAdminDashboard() {
       setReportStatus('empty');
     }
   }, [selectedDate, reports]);
+
+  const handleGenerateReport = async () => {
+    setReportStatus('generating');
+    try {
+      const newReport = await generateReport(selectedDate);
+      setReports((prev) => [...prev, newReport]);
+      setReportHtml(newReport.contents);
+      setReportStatus('ok');
+    } catch {
+      setReportStatus('error');
+    }
+  };
 
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -540,13 +552,34 @@ export default function DailyAdminDashboard() {
                         <p className="text-lg font-black text-red-400 tracking-tight">서버 연결 실패</p>
                         <p className="text-sm font-semibold text-slate-400 mt-2">백엔드 서버가 실행 중인지 확인해주세요</p>
                       </>
+                    ) : reportStatus === 'generating' ? (
+                      <>
+                        {/* 로딩 스피너 애니메이션 */}
+                        <div className="relative w-20 h-20 mb-4">
+                          <div className="absolute inset-0 rounded-full border-4 border-slate-200"></div>
+                          <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-500 animate-spin"></div>
+                          <div className="absolute inset-3 rounded-full border-4 border-transparent border-t-purple-500 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                        </div>
+                        <p className="text-lg font-black text-slate-500 tracking-tight">AI가 리포트를 생성하고 있습니다...</p>
+                        <p className="text-sm font-semibold text-slate-400 mt-2">
+                          <span className="text-blue-500 font-bold">{selectedDate}</span> 데이터를 분석 중입니다
+                        </p>
+                        <p className="text-xs font-semibold text-slate-300 mt-1">모델 성능에 따라 1~5분 정도 소요될 수 있습니다</p>
+                      </>
                     ) : (
                       <>
                         <p className="text-lg font-black text-slate-400 tracking-tight">해당 날짜의 리포트가 없습니다</p>
                         <p className="text-sm font-semibold text-slate-300 mt-2">
                           <span className="text-blue-400 font-bold">{selectedDate}</span> 에 생성된 기록이 존재하지 않습니다
                         </p>
-                        <p className="text-xs font-semibold text-slate-300 mt-1">다른 날짜를 선택하거나, 리포트를 먼저 생성해주세요</p>
+                        <button
+                          onClick={handleGenerateReport}
+                          className="mt-6 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[15px] rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 active:scale-95"
+                        >
+                          <Zap size={18} />
+                          AI 리포트 생성하기
+                        </button>
+                        <p className="text-xs font-semibold text-slate-300 mt-3">로컬 LLM을 사용하여 일일 리포트를 자동 생성합니다</p>
                       </>
                     )}
                   </div>
