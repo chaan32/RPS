@@ -18,6 +18,7 @@ class IncidentLog(Base):
     incident_type   = Column(String(10), nullable=False)   # Warning, Danger
     snapshot_path   = Column(String(512), nullable=False)   # S3 object URL
     status          = Column(String(10), nullable=False)   # success / fail
+    date            = Column(Date, nullable=False, server_default=func.current_date())
     created_at      = Column(DateTime, server_default=func.now())
 
 class Report(Base):
