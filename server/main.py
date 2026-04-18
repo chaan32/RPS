@@ -1,16 +1,18 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from datetime import date as date_cls
 from fastapi import HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
 from .mqtt import MQTTHandler
 from .database.store import save_file
+from .database.store.service import USB_BASE_PATH
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
 import os
@@ -113,9 +115,27 @@ async def upload_image(file: UploadFile = File(...)):
     """이미지를 USB에 저장하고 저장 경로를 반환"""
     contents = await file.read()
     today = datetime.now().strftime("%Y-%m-%d")
-    key = f"snapshots/{today}/{file.filename}"
+    key = f"{today}/{file.filename}"
     path = save_file(contents, key, content_type=file.content_type)
     return {"status": "success", "path": path, "filename": file.filename}
+
+
+@app.get("/images/serve")
+async def serve_usb_image(path: str):
+    """USB에 저장된 이미지를 HTTP로 서빙.
+
+    브라우저가 `<img src="/api/images/serve?path=...">` 로 요청하면
+    USB_BASE_PATH 아래의 실제 파일을 반환한다. 경로 탈출을 방지한다.
+    """
+    base = Path(USB_BASE_PATH).resolve()
+    target = (base / path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(target)
 
 
 # ── IncidentLog ───────────────────────────────────────────────────────
@@ -128,7 +148,7 @@ async def create_incident_with_snapshot(
 ):
     contents = await file.read()
     today = datetime.now().strftime("%Y-%m-%d")
-    key = f"snapshots/{today}/{file.filename}"
+    key = f"{today}/{file.filename}"
     url = save_file(contents, key, content_type=file.content_type)
 
     async with AsyncSessionLocal() as session:

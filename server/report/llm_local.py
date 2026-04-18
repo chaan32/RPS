@@ -20,9 +20,10 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "qwen3:8b")
 
 async def summarize_logs_to_html(date_str: str, logs: list[dict]) -> str:
     """Ollama /api/chat 엔드포인트를 호출하여 HTML 리포트를 생성한다."""
+    
     model = LOCAL_LLM_MODEL
     url = f"{OLLAMA_HOST}/api/chat"
-
+    print("요청을 해봄 :{url}")
     user_message = build_user_message(date_str, logs)
 
     # Qwen3 계열은 thinking mode 비활성화
