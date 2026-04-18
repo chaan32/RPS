@@ -22,7 +22,7 @@ import { fetchReports, sendAlert } from '../api';
 import type { Report } from '../api';
 
 // === Mock Data ===
-const USE_MOCK_DATA = true;
+const USE_MOCK_DATA = false;
 
 const MOCK_INCIDENTS = [
   {
