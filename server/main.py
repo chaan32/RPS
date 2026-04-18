@@ -10,7 +10,7 @@ from fastapi import HTTPException, Query
 from fastapi.responses import HTMLResponse
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
 from .mqtt import MQTTHandler
-from .s3 import upload_file
+from .database.store import save_file
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
 import os
@@ -106,7 +106,19 @@ async def get_makers():
     return makers
 
 
-# ── IncidentLog + S3 ───────────────────────────────────────────────────
+# ── Image Storage (USB) ───────────────────────────────────────────────
+
+@app.post("/images/upload")
+async def upload_image(file: UploadFile = File(...)):
+    """이미지를 USB에 저장하고 저장 경로를 반환"""
+    contents = await file.read()
+    today = datetime.now().strftime("%Y-%m-%d")
+    key = f"snapshots/{today}/{file.filename}"
+    path = save_file(contents, key, content_type=file.content_type)
+    return {"status": "success", "path": path, "filename": file.filename}
+
+
+# ── IncidentLog ───────────────────────────────────────────────────────
 
 @app.post("/incident-logs/with-snapshot", response_model=IncidentLogResponse)
 async def create_incident_with_snapshot(
@@ -117,7 +129,7 @@ async def create_incident_with_snapshot(
     contents = await file.read()
     today = datetime.now().strftime("%Y-%m-%d")
     key = f"snapshots/{today}/{file.filename}"
-    url = upload_file(contents, key, content_type=file.content_type)
+    url = save_file(contents, key, content_type=file.content_type)
 
     async with AsyncSessionLocal() as session:
         log = IncidentLog(
