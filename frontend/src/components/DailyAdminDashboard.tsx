@@ -4,7 +4,6 @@ import {
 } from 'recharts';
 import {
   LayoutDashboard,
-  FileText,
   Calendar,
   Download,
   AlertTriangle,
@@ -14,7 +13,12 @@ import {
   Zap,
   Radio,
   Eye,
-  ChevronDown
+  ChevronDown,
+  Sparkles,
+  ClipboardList,
+  NotebookPen,
+  FileWarning,
+  ScrollText
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
@@ -283,7 +287,7 @@ export default function DailyAdminDashboard() {
                   : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900 border border-transparent'
                 }`}
             >
-              <FileText size={20} /> 일자별 기록
+              <ClipboardList size={20} /> 일자별 기록
             </button>
             <button
               onClick={() => setActiveTab('vibration')}
@@ -496,7 +500,7 @@ export default function DailyAdminDashboard() {
                 <div className="mb-6 pb-6 border-b border-slate-100 flex justify-between items-center shrink-0">
                   <div>
                     <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-                      <FileText size={28} className="text-blue-600" />
+                      <ScrollText size={28} className="text-blue-600" />
                       일일 이벤트 증적 기록부
                     </h3>
                     <p className="text-[15px] text-slate-500 mt-2 font-semibold">데이터베이스에서 동기화된 리포트 원본 HTML 컨테이너입니다.</p>
@@ -573,59 +577,14 @@ export default function DailyAdminDashboard() {
                   </>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center mt-4 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/30">
-                    {/* 일러스트 SVG */}
-                    <svg width="180" height="160" viewBox="0 0 180 160" fill="none" className="mb-6 opacity-80">
-                      {/* 빈 문서 */}
-                      <rect x="50" y="20" width="80" height="105" rx="8" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="2"/>
-                      <rect x="50" y="20" width="80" height="105" rx="8" fill="url(#docGrad)" stroke="#cbd5e1" strokeWidth="2"/>
-                      {/* 접힌 모서리 */}
-                      <path d="M110 20 L130 20 L130 40 Z" fill="#f1f5f9" stroke="#cbd5e1" strokeWidth="1.5" strokeLinejoin="round"/>
-                      <path d="M110 20 L110 40 L130 40" fill="#e2e8f0" stroke="#cbd5e1" strokeWidth="1.5" strokeLinejoin="round"/>
-                      {/* 텍스트 라인 placeholder */}
-                      <rect x="66" y="52" width="48" height="5" rx="2.5" fill="#cbd5e1" opacity="0.7"/>
-                      <rect x="66" y="64" width="38" height="5" rx="2.5" fill="#cbd5e1" opacity="0.5"/>
-                      <rect x="66" y="76" width="44" height="5" rx="2.5" fill="#cbd5e1" opacity="0.4"/>
-                      <rect x="66" y="88" width="30" height="5" rx="2.5" fill="#cbd5e1" opacity="0.3"/>
-                      {/* 돋보기 */}
-                      <circle cx="128" cy="100" r="20" fill="none" stroke="#94a3b8" strokeWidth="3" opacity="0.6"/>
-                      <line x1="142" y1="114" x2="156" y2="128" stroke="#94a3b8" strokeWidth="4" strokeLinecap="round" opacity="0.6"/>
-                      {/* 물음표 */}
-                      <text x="122" y="107" textAnchor="middle" fontSize="20" fontWeight="800" fill="#94a3b8" opacity="0.7">?</text>
-                      <defs>
-                        <linearGradient id="docGrad" x1="50" y1="20" x2="130" y2="125">
-                          <stop offset="0%" stopColor="#f8fafc"/>
-                          <stop offset="100%" stopColor="#e2e8f0"/>
-                        </linearGradient>
-                      </defs>
-                    </svg>
 
                     {reportStatus === 'loading' ? (
                       <>
-                        <p className="text-lg font-black text-slate-400 tracking-tight">리포트를 불러오는 중...</p>
-                        <p className="text-sm font-semibold text-slate-300 mt-2">서버에서 데이터를 가져오고 있습니다</p>
-                      </>
-                    ) : reportStatus === 'error' ? (
-                      <>
-                        <div className="w-16 h-16 mb-4 rounded-full bg-red-50 flex items-center justify-center">
-                          <AlertTriangle size={28} className="text-red-400" />
-                        </div>
-                        <p className="text-lg font-black text-red-400 tracking-tight">서버 연결에 실패했습니다</p>
-                        <p className="text-sm font-semibold text-slate-400 mt-2">백엔드 서버가 실행 중인지 확인해주세요</p>
-                      </>
-                    ) : reportStatus === 'generating' ? (
-                      <>
-                        {/* 토스/카카오페이 스타일 로딩 — 바운싱 도트 */}
-                        <style>{`
-                          @keyframes toss-bounce {
-                            0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
-                            40% { transform: scale(1); opacity: 1; }
-                          }
-                        `}</style>
-                        <div className="flex items-center gap-2 mb-8">
+                        <div className="flex items-center gap-2 mb-4">
                           {[0, 1, 2].map((i) => (
                             <div
                               key={i}
-                              className="w-3 h-3 rounded-full bg-blue-500"
+                              className="w-2.5 h-2.5 rounded-full bg-slate-300"
                               style={{
                                 animation: 'toss-bounce 1.4s infinite ease-in-out both',
                                 animationDelay: `${i * 0.16}s`,
@@ -633,39 +592,95 @@ export default function DailyAdminDashboard() {
                             />
                           ))}
                         </div>
+                        <p className="text-lg font-black text-slate-400 tracking-tight">리포트를 불러오는 중...</p>
+                      </>
+
+                    ) : reportStatus === 'error' ? (
+                      <>
+                        <div className="w-20 h-20 mb-6 rounded-3xl bg-red-50 border border-red-100 flex items-center justify-center">
+                          <AlertTriangle size={32} className="text-red-400" />
+                        </div>
+                        <p className="text-xl font-black text-slate-700 tracking-tight">서버에 연결할 수 없어요</p>
+                        <p className="text-[15px] font-semibold text-slate-400 mt-3">백엔드 서버가 실행 중인지 확인해주세요</p>
+                        <div className="mt-5 px-5 py-2.5 bg-red-50 rounded-full border border-red-100">
+                          <p className="text-xs font-bold text-red-400">네트워크 또는 서버 상태를 점검해주세요</p>
+                        </div>
+                      </>
+
+                    ) : reportStatus === 'generating' ? (
+                      <>
+                        {/* 토스 스타일 — 펄스 아이콘 + 바운싱 도트 */}
+                        <style>{`
+                          @keyframes toss-bounce {
+                            0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+                            40% { transform: scale(1); opacity: 1; }
+                          }
+                          @keyframes toss-pulse-ring {
+                            0% { transform: scale(0.8); opacity: 0.6; }
+                            50% { transform: scale(1.15); opacity: 0.2; }
+                            100% { transform: scale(0.8); opacity: 0.6; }
+                          }
+                        `}</style>
+                        <div className="relative w-24 h-24 mb-8 flex items-center justify-center">
+                          <div className="absolute inset-0 rounded-full bg-blue-100" style={{ animation: 'toss-pulse-ring 2s infinite ease-in-out' }} />
+                          <div className="absolute inset-2 rounded-full bg-blue-50" style={{ animation: 'toss-pulse-ring 2s infinite ease-in-out 0.3s' }} />
+                          <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/30">
+                            <Sparkles size={26} className="text-white" />
+                          </div>
+                        </div>
                         <p className="text-xl font-black text-slate-700 tracking-tight">리포트를 생성하고 있어요</p>
                         <p className="text-[15px] font-semibold text-slate-400 mt-3">
-                          <span className="text-blue-500 font-bold">{selectedDate}</span> 데이터를 AI가 분석 중입니다
+                          <span className="text-blue-500 font-bold">{selectedDate}</span> 데이터를 AI가 분석하고 있습니다
                         </p>
-                        <div className="mt-6 px-5 py-2.5 bg-slate-100 rounded-full">
+                        <div className="flex items-center gap-2 mt-6">
+                          {[0, 1, 2].map((i) => (
+                            <div
+                              key={i}
+                              className="w-2 h-2 rounded-full bg-blue-400"
+                              style={{
+                                animation: 'toss-bounce 1.4s infinite ease-in-out both',
+                                animationDelay: `${i * 0.16}s`,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-5 px-5 py-2.5 bg-slate-100 rounded-full">
                           <p className="text-xs font-bold text-slate-400">잠시만 기다려주세요</p>
                         </div>
                       </>
+
                     ) : reportStatus === 'generate_no_data' ? (
                       <>
-                        <div className="w-16 h-16 mb-4 rounded-full bg-amber-50 flex items-center justify-center">
-                          <FileText size={28} className="text-amber-400" />
+                        <div className="w-20 h-20 mb-6 rounded-3xl bg-amber-50 border border-amber-100 flex items-center justify-center">
+                          <FileWarning size={32} className="text-amber-400" />
                         </div>
-                        <p className="text-lg font-black text-slate-500 tracking-tight">해당 날짜에 기록된 데이터가 없습니다</p>
-                        <p className="text-sm font-semibold text-slate-400 mt-2">
-                          <span className="text-blue-500 font-bold">{selectedDate}</span>에 수집된 사고 로그가 없어 리포트를 생성할 수 없습니다
+                        <p className="text-xl font-black text-slate-700 tracking-tight">데이터가 없어 생성할 수 없어요</p>
+                        <p className="text-[15px] font-semibold text-slate-400 mt-3">
+                          <span className="text-blue-500 font-bold">{selectedDate}</span>에 수집된 사고 로그가 없습니다
                         </p>
-                        <p className="text-xs font-semibold text-slate-300 mt-1">다른 날짜를 선택해주세요</p>
+                        <div className="mt-5 px-5 py-2.5 bg-amber-50 rounded-full border border-amber-100">
+                          <p className="text-xs font-bold text-amber-500">다른 날짜를 선택해주세요</p>
+                        </div>
                       </>
+
                     ) : (
+                      /* empty — 기본 페이지: 리포트 생성 유도 */
                       <>
-                        <p className="text-lg font-black text-slate-400 tracking-tight">해당 날짜의 리포트가 없습니다</p>
-                        <p className="text-sm font-semibold text-slate-300 mt-2">
-                          <span className="text-blue-400 font-bold">{selectedDate}</span> 에 생성된 리포트가 존재하지 않습니다
+                        <div className="w-20 h-20 mb-6 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 flex items-center justify-center">
+                          <NotebookPen size={32} className="text-blue-500" />
+                        </div>
+                        <p className="text-xl font-black text-slate-700 tracking-tight">AI 리포트를 생성해보세요</p>
+                        <p className="text-[15px] font-semibold text-slate-400 mt-3">
+                          <span className="text-blue-500 font-bold">{selectedDate}</span>의 사고 기록을 AI가 자동으로 요약합니다
                         </p>
                         <button
                           onClick={handleGenerateReport}
-                          className="mt-6 flex items-center gap-2 px-7 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[15px] rounded-2xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 active:scale-95"
+                          className="mt-7 flex items-center gap-2.5 px-7 py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-[15px] rounded-2xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all duration-200 active:scale-95"
                         >
-                          <Zap size={18} />
-                          AI 리포트 생성하기
+                          <Sparkles size={18} />
+                          리포트 생성하기
                         </button>
-                        <p className="text-xs font-semibold text-slate-300 mt-3">로컬 LLM을 사용하여 일일 리포트를 자동 생성합니다</p>
+                        <p className="text-xs font-semibold text-slate-300 mt-4">로컬 LLM을 사용하여 일일 리포트를 자동 생성합니다</p>
                       </>
                     )}
                   </div>
