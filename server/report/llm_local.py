@@ -23,7 +23,7 @@ async def summarize_logs_to_html(date_str: str, logs: list[dict]) -> str:
     
     model = LOCAL_LLM_MODEL
     url = f"{OLLAMA_HOST}/api/chat"
-    print("요청을 해봄 :{url}")
+    print(f"요청을 해봄 :{url}")
     user_message = build_user_message(date_str, logs)
 
     # Qwen3 계열은 thinking mode 비활성화

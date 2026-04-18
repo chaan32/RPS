@@ -1,6 +1,5 @@
-from __future__ import annotations
 from pydantic import BaseModel
-from datetime import date, datetime
+from datetime import date as _date, datetime
 
 
 class MakerCreate(BaseModel):
@@ -26,7 +25,7 @@ class IncidentLogCreate(BaseModel):
     incident_type: str   # Warning / Danger
     snapshot_path: str   # S3 object URL
     status: str = "success"
-    date: date | None = None  # 생략 시 오늘 날짜
+    date: _date | None = None  # 생략 시 오늘 날짜
 
 
 class IncidentLogResponse(BaseModel):
@@ -35,7 +34,7 @@ class IncidentLogResponse(BaseModel):
     incident_type: str
     snapshot_path: str
     status: str
-    date: date
+    date: _date
     created_at: datetime
 
     class Config:
@@ -45,7 +44,7 @@ class IncidentLogResponse(BaseModel):
 class ReportResponse(BaseModel):
     id: int
     contents: str
-    date: date
+    date: _date
     created_at: datetime
 
     class Config:
