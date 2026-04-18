@@ -13,8 +13,7 @@ dependencies:
     - sqlalchemy==2.0.30 # ORM
     - asyncpg==0.29.0 # DB driver postgralSQL
     - greenlet==3.0.3 # SQLAlchemy async 
-    - boto3==1.34.100 # AWS connection 
-    - python-dotenv==1.0.1 # project Config 
+    - python-dotenv==1.0.1 # project Config
     - aiomqtt==2.3.0 # mqtt
     - google-generativeai==0.8.3 # Gemini LLM API
     - httpx==0.28.1 # Ollama local LLM 호출
