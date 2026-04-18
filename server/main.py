@@ -13,7 +13,10 @@ from .mqtt import MQTTHandler
 from .database.store import save_file
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
+from .camera import camera_manager
 import os
+import cv2
+from fastapi.responses import StreamingResponse
 
 
 async def mqtt_consumer(queue: asyncio.Queue):
@@ -35,6 +38,10 @@ async def lifespan(app: FastAPI):
             session.add_all([Maker(id=i, count=0) for i in range(1, 6)])
             await session.commit()
 
+    # 카메라 스트림 시작 + 화면 표시
+    camera_manager.start_all()
+    camera_manager.start_display()
+
     # MQTT 파이프라인 시작
     queue: asyncio.Queue = asyncio.Queue()
     handler = MQTTHandler(queue)
@@ -46,6 +53,7 @@ async def lifespan(app: FastAPI):
     finally:
         producer_task.cancel()
         consumer_task.cancel()
+        camera_manager.stop_all()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -222,6 +230,53 @@ async def get_report_html(report_id: int):
 </body>
 </html>"""
     return HTMLResponse(content=page)
+
+
+# ── Camera ─────────────────────────────────────────────────────────────
+
+@app.get("/cameras")
+def list_cameras():
+    """연결된 카메라 목록 반환."""
+    return {"cameras": camera_manager.list_cameras()}
+
+
+def _generate_mjpeg(cam_name: str):
+    """MJPEG 스트림 제너레이터."""
+    while True:
+        ret, frame = camera_manager.get_frame(cam_name)
+        if not ret or frame is None:
+            continue
+        _, buf = cv2.imencode(".jpg", frame)
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+        )
+
+
+@app.get("/cameras/{cam_name}/stream")
+def camera_stream(cam_name: str):
+    """브라우저에서 MJPEG 실시간 영상을 볼 수 있는 엔드포인트."""
+    if cam_name not in camera_manager.streams:
+        raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
+    return StreamingResponse(
+        _generate_mjpeg(cam_name),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.get("/cameras/{cam_name}/snapshot")
+def camera_snapshot(cam_name: str):
+    """카메라의 현재 프레임을 JPEG 이미지로 반환."""
+    if cam_name not in camera_manager.streams:
+        raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
+    ret, frame = camera_manager.get_frame(cam_name)
+    if not ret or frame is None:
+        raise HTTPException(status_code=503, detail="프레임을 가져올 수 없음")
+    _, buf = cv2.imencode(".jpg", frame)
+    return StreamingResponse(
+        iter([buf.tobytes()]),
+        media_type="image/jpeg",
+    )
 
 
 if __name__ == "__main__":
