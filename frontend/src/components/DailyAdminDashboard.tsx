@@ -86,7 +86,7 @@ export default function DailyAdminDashboard() {
   // === 일자별 기록 뷰: 서버 리포트 연동 ===
   const [reports, setReports] = useState<Report[]>([]);
   const [reportHtml, setReportHtml] = useState('');
-  const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'generating' | 'error' | 'ok'>('loading');
+  const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'generating' | 'generate_no_data' | 'error' | 'ok'>('loading');
 
   useEffect(() => {
     if (USE_MOCK_DATA) {
@@ -131,8 +131,12 @@ export default function DailyAdminDashboard() {
       setReports((prev) => [...prev, newReport]);
       setReportHtml(newReport.contents);
       setReportStatus('ok');
-    } catch {
-      setReportStatus('error');
+    } catch (e) {
+      if (e instanceof Error && e.message === 'NO_DATA') {
+        setReportStatus('generate_no_data');
+      } else {
+        setReportStatus('error');
+      }
     }
   };
 
@@ -157,7 +161,7 @@ export default function DailyAdminDashboard() {
     }
   };
 
-  // PDF 출력 기능 연동
+  // PDF 출력 기능 연동 (멀티페이지 지원)
   const handleDownloadPdf = async () => {
     const target = reportRef.current || document.getElementById('pdf-zone');
     if (!target) {
@@ -170,20 +174,73 @@ export default function DailyAdminDashboard() {
         return node.getAttribute ? node.getAttribute('data-html2canvas-ignore') !== 'true' : true;
       };
 
-      const htmlToImageTarget = target as HTMLElement;
-      const imgData = await toPng(htmlToImageTarget, { 
-        cacheBust: true, 
-        pixelRatio: 2, 
+      const el = target as HTMLElement;
+      const pixelRatio = 2;
+      const imgData = await toPng(el, {
+        cacheBust: true,
+        pixelRatio,
         filter,
         backgroundColor: '#ffffff',
-        style: { padding: '24px' }
+        style: { padding: '24px' },
       });
-      
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (htmlToImageTarget.offsetHeight * pdfWidth) / htmlToImageTarget.offsetWidth;
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const usableWidth = pageWidth - margin * 2;
+      const usableHeight = pageHeight - margin * 2;
+
+      // 이미지 실제 픽셀 크기 구하기
+      const img = new Image();
+      img.src = imgData;
+      await new Promise<void>((resolve) => { img.onload = () => resolve(); });
+
+      const imgWidthPx = img.naturalWidth;
+      const imgHeightPx = img.naturalHeight;
+
+      // mm 단위로 환산된 전체 이미지 높이
+      const totalImgHeightMm = (imgHeightPx * usableWidth) / imgWidthPx;
+
+      if (totalImgHeightMm <= usableHeight) {
+        // 한 페이지에 들어가면 그냥 넣기
+        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, totalImgHeightMm);
+      } else {
+        // 멀티페이지: canvas 슬라이싱
+        const canvas = document.createElement('canvas');
+        canvas.width = imgWidthPx;
+        canvas.height = imgHeightPx;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+
+        // 한 페이지에 들어갈 이미지 픽셀 높이
+        const sliceHeightPx = Math.floor((usableHeight * imgWidthPx) / usableWidth);
+        let yOffset = 0;
+        let page = 0;
+
+        while (yOffset < imgHeightPx) {
+          const remaining = imgHeightPx - yOffset;
+          const currentSlice = Math.min(sliceHeightPx, remaining);
+
+          const sliceCanvas = document.createElement('canvas');
+          sliceCanvas.width = imgWidthPx;
+          sliceCanvas.height = currentSlice;
+          const sliceCtx = sliceCanvas.getContext('2d')!;
+          sliceCtx.fillStyle = '#ffffff';
+          sliceCtx.fillRect(0, 0, imgWidthPx, currentSlice);
+          sliceCtx.drawImage(canvas, 0, yOffset, imgWidthPx, currentSlice, 0, 0, imgWidthPx, currentSlice);
+
+          const sliceData = sliceCanvas.toDataURL('image/png');
+          const sliceHeightMm = (currentSlice * usableWidth) / imgWidthPx;
+
+          if (page > 0) pdf.addPage();
+          pdf.addImage(sliceData, 'PNG', margin, margin, usableWidth, sliceHeightMm);
+
+          yOffset += currentSlice;
+          page++;
+        }
+      }
+
       pdf.save(`${selectedDate}_SafeAI_안전사고_기록부.pdf`);
     } catch (error) {
       console.error("PDF 변환 에러 상세:", error);
@@ -549,32 +606,61 @@ export default function DailyAdminDashboard() {
                       </>
                     ) : reportStatus === 'error' ? (
                       <>
-                        <p className="text-lg font-black text-red-400 tracking-tight">서버 연결 실패</p>
+                        <div className="w-16 h-16 mb-4 rounded-full bg-red-50 flex items-center justify-center">
+                          <AlertTriangle size={28} className="text-red-400" />
+                        </div>
+                        <p className="text-lg font-black text-red-400 tracking-tight">서버 연결에 실패했습니다</p>
                         <p className="text-sm font-semibold text-slate-400 mt-2">백엔드 서버가 실행 중인지 확인해주세요</p>
                       </>
                     ) : reportStatus === 'generating' ? (
                       <>
-                        {/* 로딩 스피너 애니메이션 */}
-                        <div className="relative w-20 h-20 mb-4">
-                          <div className="absolute inset-0 rounded-full border-4 border-slate-200"></div>
-                          <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-500 animate-spin"></div>
-                          <div className="absolute inset-3 rounded-full border-4 border-transparent border-t-purple-500 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                        {/* 토스/카카오페이 스타일 로딩 — 바운싱 도트 */}
+                        <style>{`
+                          @keyframes toss-bounce {
+                            0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+                            40% { transform: scale(1); opacity: 1; }
+                          }
+                        `}</style>
+                        <div className="flex items-center gap-2 mb-8">
+                          {[0, 1, 2].map((i) => (
+                            <div
+                              key={i}
+                              className="w-3 h-3 rounded-full bg-blue-500"
+                              style={{
+                                animation: 'toss-bounce 1.4s infinite ease-in-out both',
+                                animationDelay: `${i * 0.16}s`,
+                              }}
+                            />
+                          ))}
                         </div>
-                        <p className="text-lg font-black text-slate-500 tracking-tight">AI가 리포트를 생성하고 있습니다...</p>
-                        <p className="text-sm font-semibold text-slate-400 mt-2">
-                          <span className="text-blue-500 font-bold">{selectedDate}</span> 데이터를 분석 중입니다
+                        <p className="text-xl font-black text-slate-700 tracking-tight">리포트를 생성하고 있어요</p>
+                        <p className="text-[15px] font-semibold text-slate-400 mt-3">
+                          <span className="text-blue-500 font-bold">{selectedDate}</span> 데이터를 AI가 분석 중입니다
                         </p>
-                        <p className="text-xs font-semibold text-slate-300 mt-1">모델 성능에 따라 1~5분 정도 소요될 수 있습니다</p>
+                        <div className="mt-6 px-5 py-2.5 bg-slate-100 rounded-full">
+                          <p className="text-xs font-bold text-slate-400">잠시만 기다려주세요</p>
+                        </div>
+                      </>
+                    ) : reportStatus === 'generate_no_data' ? (
+                      <>
+                        <div className="w-16 h-16 mb-4 rounded-full bg-amber-50 flex items-center justify-center">
+                          <FileText size={28} className="text-amber-400" />
+                        </div>
+                        <p className="text-lg font-black text-slate-500 tracking-tight">해당 날짜에 기록된 데이터가 없습니다</p>
+                        <p className="text-sm font-semibold text-slate-400 mt-2">
+                          <span className="text-blue-500 font-bold">{selectedDate}</span>에 수집된 사고 로그가 없어 리포트를 생성할 수 없습니다
+                        </p>
+                        <p className="text-xs font-semibold text-slate-300 mt-1">다른 날짜를 선택해주세요</p>
                       </>
                     ) : (
                       <>
                         <p className="text-lg font-black text-slate-400 tracking-tight">해당 날짜의 리포트가 없습니다</p>
                         <p className="text-sm font-semibold text-slate-300 mt-2">
-                          <span className="text-blue-400 font-bold">{selectedDate}</span> 에 생성된 기록이 존재하지 않습니다
+                          <span className="text-blue-400 font-bold">{selectedDate}</span> 에 생성된 리포트가 존재하지 않습니다
                         </p>
                         <button
                           onClick={handleGenerateReport}
-                          className="mt-6 flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[15px] rounded-xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 active:scale-95"
+                          className="mt-6 flex items-center gap-2 px-7 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[15px] rounded-2xl shadow-lg hover:shadow-blue-500/30 transition-all duration-200 active:scale-95"
                         >
                           <Zap size={18} />
                           AI 리포트 생성하기

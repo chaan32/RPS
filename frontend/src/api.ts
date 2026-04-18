@@ -57,6 +57,9 @@ export async function generateReport(targetDate?: string): Promise<Report> {
   const res = await fetch(`${BASE}/reports/generate${query}`, {
     method: 'POST',
   });
-  if (!res.ok) throw new Error('report 생성 실패');
+  if (!res.ok) {
+    if (res.status === 404) throw new Error('NO_DATA');
+    throw new Error('SERVER_ERROR');
+  }
   return res.json();
 }
