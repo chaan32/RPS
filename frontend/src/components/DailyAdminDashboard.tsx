@@ -176,13 +176,40 @@ export default function DailyAdminDashboard() {
 
       const el = target as HTMLElement;
       const pixelRatio = 2;
-      const imgData = await toPng(el, {
-        cacheBust: true,
-        pixelRatio,
-        filter,
-        backgroundColor: '#ffffff',
-        style: { padding: '24px' },
-      });
+
+      // overflow-y-auto로 잘린 영역까지 포함해 전체 스크롤 내용을 캡처하기 위해
+      // 캡처 직전에 컨테이너 높이/overflow 제약을 일시적으로 해제한다.
+      const originalStyles = {
+        maxHeight: el.style.maxHeight,
+        height: el.style.height,
+        overflow: el.style.overflow,
+        overflowY: el.style.overflowY,
+      };
+      el.style.maxHeight = 'none';
+      el.style.height = 'auto';
+      el.style.overflow = 'visible';
+      el.style.overflowY = 'visible';
+
+      const fullWidth = el.scrollWidth;
+      const fullHeight = el.scrollHeight;
+
+      let imgData: string;
+      try {
+        imgData = await toPng(el, {
+          cacheBust: true,
+          pixelRatio,
+          filter,
+          backgroundColor: '#ffffff',
+          width: fullWidth,
+          height: fullHeight,
+          style: { padding: '24px' },
+        });
+      } finally {
+        el.style.maxHeight = originalStyles.maxHeight;
+        el.style.height = originalStyles.height;
+        el.style.overflow = originalStyles.overflow;
+        el.style.overflowY = originalStyles.overflowY;
+      }
 
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pageWidth = pdf.internal.pageSize.getWidth();
