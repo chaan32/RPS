@@ -40,9 +40,13 @@ async def lifespan(app: FastAPI):
             session.add_all([Maker(id=i, count=0) for i in range(1, 6)])
             await session.commit()
 
-    # 카메라 스트림 시작 + 화면 표시
+    # 카메라 스트림 시작 (API 스냅샷/스트리밍용)
     camera_manager.start_all()
-    camera_manager.start_display()
+
+    # YOLO + ArUco 카메라 모니터를 별도 프로세스로 띄우기
+    import subprocess, sys
+    yolo_path = os.path.join(os.path.dirname(__file__), "..", "YOLO", "yolo_aruco.py")
+    cam_proc = subprocess.Popen([sys.executable, yolo_path])
 
     # MQTT 파이프라인 시작
     queue: asyncio.Queue = asyncio.Queue()
@@ -55,6 +59,7 @@ async def lifespan(app: FastAPI):
     finally:
         producer_task.cancel()
         consumer_task.cancel()
+        cam_proc.terminate()
         camera_manager.stop_all()
 
 
