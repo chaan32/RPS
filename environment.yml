@@ -21,3 +21,4 @@ dependencies:
     - eval_type_backport==0.2.0 # `date | None` 등 PEP 604 타입 평가 백포트
     - opencv-python==4.10.0.84 # camera, image processing
     - loguru==0.7.3 # logging
+    - ultralytics ==8.4.38 # 욜로 
