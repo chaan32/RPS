@@ -10,12 +10,14 @@ from datetime import date as date_cls
 from fastapi import HTTPException, Query
 from fastapi.responses import HTMLResponse, FileResponse
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
-from .mqtt import MQTTHandler
+from .pipeline import MQTTHandler
 from .database.store import save_file
 from .database.store.service import USB_BASE_PATH
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
-# from .camera import camera_manager  # 현재 웹에서 카메라 미사용
+# 카메라 API 필요 시 아래 주석 해제
+# import sys; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "input", "media"))
+# from camera import camera_manager
 import os
 # import cv2  # 현재 웹에서 카메라 미사용
 # from fastapi.responses import StreamingResponse  # 현재 웹에서 카메라 미사용
@@ -48,7 +50,7 @@ async def lifespan(app: FastAPI):
 
     # YOLO + ArUco 카메라 모니터를 별도 프로세스로 띄우기
     import subprocess, sys
-    yolo_path = os.path.join(os.path.dirname(__file__), "..", "YOLO", "yolo_aruco.py")
+    yolo_path = os.path.join(os.path.dirname(__file__), "..", "input", "media", "run_yolo.py")
     
     # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성! 
     cam_proc = subprocess.Popen([sys.executable, yolo_path])
