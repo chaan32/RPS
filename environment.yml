@@ -19,7 +19,10 @@ dependencies:
     - httpx==0.28.1 # Ollama local LLM 호출
     - pydantic==2.7.4 # data validation
     - eval_type_backport==0.2.0 # `date | None` 등 PEP 604 타입 평가 백포트
+    - numpy>=1.24.0 # 배열 연산, 이미지 처리
     - opencv-python==4.10.0.84 # camera, image processing
     - loguru==0.7.3 # logging
+    - torch>=2.0.0 # ultralytics 의존성 (PyTorch)
+    - torchvision>=0.15.0 # ultralytics 의존성
     - ultralytics ==8.4.38 # 욜로
     - lap>=0.5.12 # YOLO tracker (linear assignment)
