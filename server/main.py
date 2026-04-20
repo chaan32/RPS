@@ -15,10 +15,10 @@ from .database.store import save_file
 from .database.store.service import USB_BASE_PATH
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
-from .camera import camera_manager
+# from .camera import camera_manager  # 현재 웹에서 카메라 미사용
 import os
-import cv2
-from fastapi.responses import StreamingResponse
+# import cv2  # 현재 웹에서 카메라 미사용
+# from fastapi.responses import StreamingResponse  # 현재 웹에서 카메라 미사용
 
 
 async def mqtt_consumer(queue: asyncio.Queue):
@@ -27,40 +27,47 @@ async def mqtt_consumer(queue: asyncio.Queue):
         print(f"🛠  Consumer got: {data}")
         # TODO: 필요 시 DB 저장 등 추가 처리
 
-
+''' 
+서버를 실행하고 끌 때 카메라 관련 내용 정리하게 하는 함수
+'''
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # DB가 없으면 생성하기 - 있으면 생략 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 최초 실행 시 Maker 5개 시드
+    # DB에 Maker가 1~5까지 있는지 보고 없으면 생성하기 - 있으면 생략 
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Maker))
         if not result.scalars().first():
             session.add_all([Maker(id=i, count=0) for i in range(1, 6)])
             await session.commit()
 
-    # 카메라 스트림 시작 (API 스냅샷/스트리밍용)
-    camera_manager.start_all()
+    # 카메라 스트림 시작 (API 스냅샷/스트리밍용) — 현재 웹에서 미사용
+    # camera_manager.start_all()
 
     # YOLO + ArUco 카메라 모니터를 별도 프로세스로 띄우기
     import subprocess, sys
     yolo_path = os.path.join(os.path.dirname(__file__), "..", "YOLO", "yolo_aruco.py")
+    
+    # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성! 
     cam_proc = subprocess.Popen([sys.executable, yolo_path])
 
     # MQTT 파이프라인 시작
-    queue: asyncio.Queue = asyncio.Queue()
-    handler = MQTTHandler(queue)
-    producer_task = asyncio.create_task(handler.run())
+    queue: asyncio.Queue = asyncio.Queue() # 비동기 큐로 생성
+    handler = MQTTHandler(queue) # 메세지가 오면 큐에 메세지를 넣음 
+    producer_task = asyncio.create_task(handler.run()) # 둘 다 백그라운드 비동기 태스크로 등록
     consumer_task = asyncio.create_task(mqtt_consumer(queue))
 
+    # 여기까지 서버를 실행하기 전에 실행할 것들 
     try:
         yield
     finally:
+        # 서버가 꺼지고 실행할 것들
         producer_task.cancel()
         consumer_task.cancel()
         cam_proc.terminate()
-        camera_manager.stop_all()
+        # camera_manager.stop_all()  # 현재 웹에서 카메라 미사용
 
 
 app = FastAPI(lifespan=lifespan)
@@ -257,51 +264,51 @@ async def get_report_html(report_id: int):
     return HTMLResponse(content=page)
 
 
-# ── Camera ─────────────────────────────────────────────────────────────
+# ── Camera (현재 웹에서 미사용 — 필요 시 주석 해제) ─────────────────────
 
-@app.get("/cameras")
-def list_cameras():
-    """연결된 카메라 목록 반환."""
-    return {"cameras": camera_manager.list_cameras()}
-
-
-def _generate_mjpeg(cam_name: str):
-    """MJPEG 스트림 제너레이터."""
-    while True:
-        ret, frame = camera_manager.get_frame(cam_name)
-        if not ret or frame is None:
-            continue
-        _, buf = cv2.imencode(".jpg", frame)
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
-        )
-
-
-@app.get("/cameras/{cam_name}/stream")
-def camera_stream(cam_name: str):
-    """브라우저에서 MJPEG 실시간 영상을 볼 수 있는 엔드포인트."""
-    if cam_name not in camera_manager.streams:
-        raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
-    return StreamingResponse(
-        _generate_mjpeg(cam_name),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
-
-
-@app.get("/cameras/{cam_name}/snapshot")
-def camera_snapshot(cam_name: str):
-    """카메라의 현재 프레임을 JPEG 이미지로 반환."""
-    if cam_name not in camera_manager.streams:
-        raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
-    ret, frame = camera_manager.get_frame(cam_name)
-    if not ret or frame is None:
-        raise HTTPException(status_code=503, detail="프레임을 가져올 수 없음")
-    _, buf = cv2.imencode(".jpg", frame)
-    return StreamingResponse(
-        iter([buf.tobytes()]),
-        media_type="image/jpeg",
-    )
+# @app.get("/cameras")
+# def list_cameras():
+#     """연결된 카메라 목록 반환."""
+#     return {"cameras": camera_manager.list_cameras()}
+#
+#
+# def _generate_mjpeg(cam_name: str):
+#     """MJPEG 스트림 제너레이터."""
+#     while True:
+#         ret, frame = camera_manager.get_frame(cam_name)
+#         if not ret or frame is None:
+#             continue
+#         _, buf = cv2.imencode(".jpg", frame)
+#         yield (
+#             b"--frame\r\n"
+#             b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+#         )
+#
+#
+# @app.get("/cameras/{cam_name}/stream")
+# def camera_stream(cam_name: str):
+#     """브라우저에서 MJPEG 실시간 영상을 볼 수 있는 엔드포인트."""
+#     if cam_name not in camera_manager.streams:
+#         raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
+#     return StreamingResponse(
+#         _generate_mjpeg(cam_name),
+#         media_type="multipart/x-mixed-replace; boundary=frame",
+#     )
+#
+#
+# @app.get("/cameras/{cam_name}/snapshot")
+# def camera_snapshot(cam_name: str):
+#     """카메라의 현재 프레임을 JPEG 이미지로 반환."""
+#     if cam_name not in camera_manager.streams:
+#         raise HTTPException(status_code=404, detail=f"카메라 '{cam_name}' 없음")
+#     ret, frame = camera_manager.get_frame(cam_name)
+#     if not ret or frame is None:
+#         raise HTTPException(status_code=503, detail="프레임을 가져올 수 없음")
+#     _, buf = cv2.imencode(".jpg", frame)
+#     return StreamingResponse(
+#         iter([buf.tobytes()]),
+#         media_type="image/jpeg",
+#     )
 
 
 if __name__ == "__main__":
