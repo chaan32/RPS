@@ -26,3 +26,14 @@ dependencies:
     - torchvision>=0.15.0 # ultralytics 의존성
     - ultralytics ==8.4.38 # 욜로
     - lap>=0.5.12 # YOLO tracker (linear assignment)
+    - tensorflow>=2.12.0 # YAMNet 모델 로드 및 학습
+    - tensorflow-hub>=0.13.0 # YAMNet 다운로드
+    - soundfile>=0.12.0 # WAV 파일 읽기/쓰기
+    - librosa>=0.10.0 # 오디오 전처리 (리샘플링)
+    - sounddevice>=0.4.6 # 실시간 마이크 입력
+    - scikit-learn>=1.3.0 # train/test 분할, 평가 리포트
+    - scipy>=1.11.0 # WAV 파일 저장 (녹음)
+    - pydub>=0.25.1 # mp3 → wav 오디오 변환
+    - matplotlib>=3.7.0 # 학습 결과 시각화
+    - jupyter>=1.0.0 # Jupyter Notebook
+    - ipykernel>=6.25.0 # 가상환경 커널 등록

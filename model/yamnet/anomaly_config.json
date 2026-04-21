@@ -1,0 +1,28 @@
+{
+  "threshold": 0.68,
+  "threshold_raw": 0.794765830039978,
+  "threshold_margin": 0.02,
+  "num_files": 24,
+  "num_frames": 636,
+  "num_original_frames": 159,
+  "num_aug_frames": 477,
+  "aug_per_file": 3,
+  "noise_snr_db": [
+    25,
+    40
+  ],
+  "time_shift_max": 0.1,
+  "outlier_quantile": 0.1,
+  "source": "dataset/plz_wav_framewise_augmented",
+  "peak_target": 0.95,
+  "extra_gain_db": 0.0,
+  "frame_sec": 0.96,
+  "hop_sec": 0.48,
+  "min_frame_rms": 0.01,
+  "peak_normalize": true,
+  "inference_mode": "max_pooling",
+  "cv_method": "LOFO",
+  "cv_test_recall": 1.0,
+  "target_recall": 0.95,
+  "embedding_dim": 1024
+}
