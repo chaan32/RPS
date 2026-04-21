@@ -4,7 +4,7 @@
 Enter로 녹음 시작 → Enter로 녹음 종료 → 자동 저장을 반복한다.
 q 입력 시 종료.
 
-저장 경로: input/audio/dataset/{category}/{label}/{category}_{번호}.wav
+저장 경로: model/yamnet/dataset/{category}/{label}/{category}_{번호}.wav
 포맷: 16kHz 모노 WAV (YAMNet 입력 규격)
 
 카테고리:

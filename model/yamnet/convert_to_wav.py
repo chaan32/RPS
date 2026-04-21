@@ -3,7 +3,7 @@
 dataset/anomaly (또는 normal) 폴더 안의 mp3, m4a, ogg, flac, aac, wma 파일을
 16kHz 모노 WAV로 변환하고 원본은 삭제한다.
 
-실행: python input/audio/convert_to_wav.py
+실행: python model/yamnet/convert_to_wav.py
 """
 
 import os

@@ -15,6 +15,7 @@ from .database.store import save_file
 from .database.store.service import USB_BASE_PATH
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
+from input.audio import esp32_audio_router
 # 카메라 API 필요 시 아래 주석 해제
 # import sys; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "input", "media"))
 # from camera import camera_manager
@@ -81,6 +82,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ESP32-S3-WROOM-1 오디오 입력 WebSocket  (/ws/audio)
+app.include_router(esp32_audio_router)
 
 
 @app.get("/")
