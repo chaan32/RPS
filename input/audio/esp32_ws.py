@@ -148,10 +148,13 @@ async def _process_window(ws: WebSocket, pcm_bytes: bytes, detector: YamnetDetec
     rms = float(np.sqrt(np.mean(pcm ** 2)))
 
     if rms < MIN_RMS:
+        print(f"[audio] silence rms={rms:.4f}", flush=True)
         await ws.send_json({"type": "silence", "rms": rms})
         return
 
     max_sim, is_anomaly, n_frames = await asyncio.to_thread(detector.predict, pcm)
+    mark = "★ANOMALY" if is_anomaly else "  normal "
+    print(f"[audio] {mark} max_sim={max_sim:.3f} rms={rms:.4f} frames={n_frames}", flush=True)
     await ws.send_json({
         "type": "detection",
         "is_anomaly": bool(is_anomaly),
