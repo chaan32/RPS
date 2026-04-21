@@ -1,9 +1,12 @@
-"""실시간 마이크 이상 소리 감지.
+"""실시간 마이크 이상 소리 감지 (로컬 마이크 기준).
 
-노트북 학습과 동일한 파이프라인을 적용:
+ESP32에서 오는 스트림을 처리하려면 input/audio/esp32_ws.py를 사용한다.
+이 스크립트는 노트북 마이크로 빠르게 검증할 때만 쓴다.
+
+파이프라인:
   마이크 buffer → peak normalize → 0.96s frame 분할 → YAMNet 임베딩 → centroid 유사도 → max pooling
 
-실행: python input/audio/realtime_detect.py
+실행: python model/yamnet/realtime_detect.py
 종료: Ctrl+C
 """
 
@@ -22,8 +25,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 # ── 경로 & 사용자 설정 ──────────────────────────────────────────────────
-PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-MODEL_DIR = os.path.join(PROJECT_ROOT, "model", "yamnet")
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 CENTROID_PATH = os.path.join(MODEL_DIR, "anomaly_centroid.npy")
 CONFIG_PATH = os.path.join(MODEL_DIR, "anomaly_config.json")
 

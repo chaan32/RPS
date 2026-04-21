@@ -4,7 +4,7 @@ peak normalize + frame 분할 + max pooling 으로 추론하여
 학습/실시간/테스트의 결과가 일관되도록 한다.
 
 사용법:
-  python input/audio/test_with_wav.py <wav파일_또는_폴더>
+  python model/yamnet/test_with_wav.py <wav파일_또는_폴더>
 """
 
 import os
@@ -17,13 +17,12 @@ import librosa
 import tensorflow_hub as hub
 from sklearn.metrics.pairwise import cosine_similarity
 
-PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
-MODEL_DIR = os.path.join(PROJECT_ROOT, "model", "yamnet")
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 CENTROID_PATH = os.path.join(MODEL_DIR, "anomaly_centroid.npy")
 CONFIG_PATH = os.path.join(MODEL_DIR, "anomaly_config.json")
 
 if len(sys.argv) < 2:
-    print("사용법: python input/audio/test_with_wav.py <wav파일_또는_폴더>")
+    print("사용법: python model/yamnet/test_with_wav.py <wav파일_또는_폴더>")
     sys.exit(1)
 
 target = sys.argv[1]
