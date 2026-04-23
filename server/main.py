@@ -49,12 +49,19 @@ async def lifespan(app: FastAPI):
     # 카메라 스트림 시작 (API 스냅샷/스트리밍용) — 현재 웹에서 미사용
     # camera_manager.start_all()
 
-    # YOLO + ArUco 카메라 모니터를 별도 프로세스로 띄우기
+    # YOLO + 월드 좌표 파이프라인을 별도 프로세스로 기동.
+    # world_pipeline.py 내부에서 cam1/cam2_homography.json 존재 여부를 스스로 체크하고
+    # 없으면 자동으로 RTSP 스냅샷 캡처 + 캘리브레이션 후 라이브 루프 진입.
+    # --no-prompt 로 비대화형 모드 (Enter 대기 없이 3초 뒤 자동 캡처).
     import subprocess, sys
-    yolo_path = os.path.join(os.path.dirname(__file__), "..", "input", "media", "run_yolo.py")
-    
-    # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성! 
-    cam_proc = subprocess.Popen([sys.executable, yolo_path])
+    pipeline_path = os.path.join(
+        os.path.dirname(__file__), "..", "input", "media", "world_pipeline.py"
+    )
+
+    # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성!
+    cam_proc = subprocess.Popen(
+        [sys.executable, pipeline_path, "--live", "--no-prompt"]
+    )
 
     # MQTT 파이프라인 시작
     queue: asyncio.Queue = asyncio.Queue() # 비동기 큐로 생성
