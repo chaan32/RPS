@@ -23,6 +23,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# RTSP 전송을 TCP로 강제 (macOS + UDP 조합에서 cam 연결 실패/bus error 빈발).
+# camera.py의 setdefault보다 먼저 설정해야 함.
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+    "rtsp_transport;tcp|fflags;nobuffer|analyzeduration;0|probesize;32"
+)
+
 import cv2
 from dotenv import load_dotenv
 
@@ -42,15 +48,19 @@ CALIBRATION_DIR = PROJECT_ROOT / "calibration"
 # ── 모델 로드 (모듈 로드 시 1회) ────────────────────────────────────────
 pose_model = YOLO("yolo11n-pose.pt")
 
-forklift_model = None
+# 커스텀 모델 (현재: forklift + box_1 + box_2 탐지)
+custom_model = None
+custom_model_names: dict[int, str] = {}
 _best_path = os.getenv("BEST_MODEL_PATH", "")
 if _best_path and not os.path.isabs(_best_path):
     _best_path = str(PROJECT_ROOT / _best_path)
 if _best_path and os.path.exists(_best_path):
-    forklift_model = YOLO(_best_path)
-    print(f"[init] forklift 모델 로드: {_best_path}")
+    custom_model = YOLO(_best_path)
+    custom_model_names = custom_model.names
+    print(f"[init] 커스텀 모델 로드: {_best_path}")
+    print(f"[init] 클래스: {custom_model_names}")
 else:
-    print("[init] forklift 모델 경로 없음 — person 감지만 수행")
+    print("[init] 커스텀 모델 경로 없음 — person 감지만 수행")
 
 
 # ── Step 3~4: YOLO + 발 픽셀 + 월드 변환 ────────────────────────────────
@@ -59,6 +69,12 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
     detections = []
 
     # (a) 사람 포즈 트래킹
+    #  - 기본: YOLO-pose의 양 발목(15, 16) 중점을 "발 픽셀"로 사용
+    #    → 카메라 각도에 무관하게 물리적 발 위치가 찍힘 (bbox는 각도따라 중심 이동함)
+    #  - 발목 감지 실패 시 bbox 하단 중앙으로 폴백
+    LEFT_ANKLE, RIGHT_ANKLE = 15, 16
+    KPT_CONF_THRESHOLD = 0.3
+
     pose_results = pose_model.track(
         frame, conf=0.25, persist=True, verbose=False, classes=[0]
     )
@@ -70,29 +86,67 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
             ids_t.cpu().numpy().astype(int).tolist()
             if ids_t is not None else [None] * len(xyxy)
         )
-        for box, tid in zip(xyxy, ids_arr):
+
+        kpts_xy = None
+        kpts_conf = None
+        if pose_results[0].keypoints is not None:
+            kpts_xy = pose_results[0].keypoints.xy.cpu().numpy()       # (N, 17, 2)
+            if pose_results[0].keypoints.conf is not None:
+                kpts_conf = pose_results[0].keypoints.conf.cpu().numpy()  # (N, 17)
+
+        for i, (box, tid) in enumerate(zip(xyxy, ids_arr)):
             x1, y1, x2, y2 = [float(v) for v in box]
-            foot_x = (x1 + x2) / 2
-            foot_y = y2
+
+            # 발목 키포인트 선호
+            foot_x, foot_y = None, None
+            foot_source = "bbox_bottom"
+            if kpts_xy is not None and i < len(kpts_xy):
+                la = kpts_xy[i, LEFT_ANKLE]
+                ra = kpts_xy[i, RIGHT_ANKLE]
+                la_ok = la[0] > 0 and la[1] > 0 and (
+                    kpts_conf is None or kpts_conf[i, LEFT_ANKLE] >= KPT_CONF_THRESHOLD
+                )
+                ra_ok = ra[0] > 0 and ra[1] > 0 and (
+                    kpts_conf is None or kpts_conf[i, RIGHT_ANKLE] >= KPT_CONF_THRESHOLD
+                )
+                if la_ok and ra_ok:
+                    foot_x = (la[0] + ra[0]) / 2
+                    foot_y = (la[1] + ra[1]) / 2
+                    foot_source = "ankles_mid"
+                elif la_ok:
+                    foot_x, foot_y = float(la[0]), float(la[1])
+                    foot_source = "left_ankle"
+                elif ra_ok:
+                    foot_x, foot_y = float(ra[0]), float(ra[1])
+                    foot_source = "right_ankle"
+
+            # 폴백: bbox 하단 중앙
+            if foot_x is None:
+                foot_x = (x1 + x2) / 2
+                foot_y = y2
+
             wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
             detections.append({
                 "type": "worker",
                 "track_id": tid,
                 "bbox_px": [x1, y1, x2, y2],
-                "foot_px": [foot_x, foot_y],
+                "foot_px": [float(foot_x), float(foot_y)],
+                "foot_source": foot_source,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
 
-    # (b) 지게차 감지 (모델 있는 경우만)
-    if forklift_model is not None:
-        fl_results = forklift_model(frame, conf=0.5, verbose=False)
-        for box in fl_results[0].boxes:
+    # (b) 커스텀 모델 감지 (forklift, box_1, box_2 등)
+    if custom_model is not None:
+        results = custom_model(frame, conf=0.5, verbose=False)
+        for box in results[0].boxes:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
+            cls_id = int(box.cls[0])
+            cls_name = custom_model_names.get(cls_id, f"cls_{cls_id}")
             foot_x = (x1 + x2) / 2
             foot_y = y2
             wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
             detections.append({
-                "type": "forklift",
+                "type": cls_name,
                 "track_id": None,
                 "bbox_px": [x1, y1, x2, y2],
                 "foot_px": [foot_x, foot_y],
@@ -105,7 +159,12 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
 def draw_annotated(frame, detections: list[dict]):
     """bbox + 발 점 + 월드 좌표 라벨 오버레이."""
     out = frame.copy()
-    colors = {"worker": (0, 255, 255), "forklift": (0, 0, 255)}
+    colors = {
+        "worker": (0, 255, 255),   # 노랑 (BGR)
+        "forklift": (0, 0, 255),   # 빨강
+        "box_1": (0, 200, 0),      # 초록
+        "box_2": (255, 0, 200),    # 자주
+    }
     for d in detections:
         x1, y1, x2, y2 = [int(v) for v in d["bbox_px"]]
         fx, fy = [int(v) for v in d["foot_px"]]
@@ -250,10 +309,33 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
         print(f"[cam2] ✓ 캘리브레이션 존재 ({h2.name})")
 
     # Phase 3: 라이브 스트림 시작
-    print("\n[live] 파이프라인 시작 (ESC 종료)...")
+    print("\n[live] 카메라 스트림 시작 중...")
     cam1 = VideoStream(rtsp_1).start()
     cam2 = VideoStream(rtsp_2).start()
-    time.sleep(2)
+
+    # 첫 프레임 도착까지 최대 25초 재시도 (카메라 이전 세션 만료 대기)
+    def wait_for_frame(cam, name: str, max_wait: float = 25.0) -> bool:
+        start = time.time()
+        while time.time() - start < max_wait:
+            ret, frame = cam.read()
+            if ret and frame is not None:
+                print(f"  [{name}] ✓ 프레임 수신 ({int(time.time() - start)}s)")
+                return True
+            time.sleep(0.5)
+        print(f"  [{name}] ✗ {int(max_wait)}s 내 프레임 없음")
+        return False
+
+    ok1 = wait_for_frame(cam1, "cam1")
+    ok2 = wait_for_frame(cam2, "cam2")
+
+    if not ok2:
+        print(
+            "\n  ⚠ cam2 프레임 수신 실패. 가능 원인:\n"
+            "    1) 카메라에 이전 RTSP 세션이 60초 이상 남아있음 — 시간을 두고 재시도\n"
+            "    2) 카메라 전원/네트워크 이상 — 물리 재부팅 권장\n"
+            "    3) stream2 URL 오류 — ffplay로 직접 테스트 (아래 안내 참조)\n"
+        )
+    print("[live] 파이프라인 진입 (ESC 종료)...")
 
     try:
         while True:
