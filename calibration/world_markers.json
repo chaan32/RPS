@@ -1,0 +1,11 @@
+{
+  "note": "책상 위 미니 테스트 — 사각 배치 (x: 100cm, y: 150cm)",
+  "origin_description": "ID 24(좌하)=원점. x축=짧은 변(→), y축=긴 변(↑)",
+  "aruco_dictionary": "DICT_5X5_50",
+  "markers": [
+    { "id": 24, "world_x": 0.0, "world_y": 0.0 },
+    { "id": 27, "world_x": 1.0, "world_y": 0.0 },
+    { "id":  0, "world_x": 0.0, "world_y": 1.5 },
+    { "id": 22, "world_x": 1.0, "world_y": 1.5 }
+  ]
+}
