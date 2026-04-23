@@ -123,17 +123,23 @@ def draw_annotated(frame, detections: list[dict]):
 
 
 # ── Step 1~2: 캘리브레이션 자동 확보 ────────────────────────────────────
-def _capture_rtsp_snapshot(cam_id: str, rtsp_url: str) -> Path:
+def _capture_rtsp_snapshot(cam_id: str, rtsp_url: str, interactive: bool = True) -> Path:
     """RTSP에서 1프레임 캡처하여 calibration/test_{cam_id}.jpg 저장.
 
     스레드 기반 VideoStream 대신 cv2.VideoCapture를 직접 사용.
     macOS + FFmpeg에서 스레드 VideoStream 재생성 시 Bus error가 자주 나서
     원샷 캡처는 단순 경로로 처리.
+
+    interactive=False 이면 Enter 대기 없이 즉시 캡처 (서버 자동 기동용).
     """
     import gc
     snap = CALIBRATION_DIR / f"test_{cam_id}.jpg"
     print(f"[{cam_id}] 캘리브레이션 스냅샷 없음")
-    input(f"  → {cam_id} 시야에 ArUco 마커 4개를 모두 배치하고 Enter: ")
+    if interactive:
+        input(f"  → {cam_id} 시야에 ArUco 마커 4개를 모두 배치하고 Enter: ")
+    else:
+        print(f"  → 3초 뒤 자동 캡처 (ArUco 마커 4개가 시야에 있어야 함)")
+        time.sleep(3)
 
     # TCP 강제 (UDP는 macOS + FFmpeg에서 bus error 빈발)
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
@@ -210,7 +216,7 @@ def run_image(cam_id: str, image_path: Path) -> dict:
 
 
 # ── 모드 2: 라이브 RTSP ─────────────────────────────────────────────────
-def run_live(show: bool = True) -> None:
+def run_live(show: bool = True, interactive: bool = True) -> None:
     from camera import VideoStream
 
     rtsp_1 = os.getenv("CAMERA_RTSP_URL_1")
@@ -226,9 +232,9 @@ def run_live(show: bool = True) -> None:
     h2 = CALIBRATION_DIR / "cam2_homography.json"
 
     if not h1.exists() and not snap1.exists():
-        _capture_rtsp_snapshot("cam1", rtsp_1)
+        _capture_rtsp_snapshot("cam1", rtsp_1, interactive=interactive)
     if not h2.exists() and not snap2.exists():
-        _capture_rtsp_snapshot("cam2", rtsp_2)
+        _capture_rtsp_snapshot("cam2", rtsp_2, interactive=interactive)
 
     # Phase 2: 이미지 파일만으로 캘리브레이션 (RTSP 미사용)
     if not h1.exists():
@@ -287,10 +293,12 @@ def main():
     parser.add_argument("--image", help="처리할 이미지 경로 (이미지 모드)")
     parser.add_argument("--live", action="store_true", help="RTSP 라이브 모드")
     parser.add_argument("--no-show", action="store_true", help="라이브 창 숨김")
+    parser.add_argument("--no-prompt", action="store_true",
+                        help="Enter 대기 없이 자동 캡처 (서버 자동 기동용)")
     args = parser.parse_args()
 
     if args.live:
-        run_live(show=not args.no_show)
+        run_live(show=not args.no_show, interactive=not args.no_prompt)
     elif args.cam and args.image:
         run_image(args.cam, Path(args.image))
     else:
