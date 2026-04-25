@@ -1,10 +1,13 @@
 """
 Fusion 알림 → MQTT 발행.
 
-실제 아두이노 펌웨어(output/Arduino_vibration_output.ipynb) 기준:
-  - 구독 토픽 : "crane/2/vibration" (단일)
+실제 아두이노 펌웨어 기준:
+  - 구독 토픽 : "forklift/4/vibration" (단일)
   - 인식 payload: "left" / "back" / "right" / "all"
     (그 외 문자열은 "Unknown payload"로 무시됨)
+
+현재 정책: 충돌이 발생하면 위협 종류(forklift/dropzone) 무관하게
+무조건 forklift/4/vibration 토픽으로 "right" payload 를 발행한다.
 
 사용:
   pred = FusionPrediction.from_model_output(risk_matrix)
@@ -28,17 +31,17 @@ from risk_output import (
 
 
 # ── 아두이노 펌웨어 기준 토픽/payload ──
-# 펌웨어가 단일 토픽만 구독하므로 fork/dropzone 모두 동일 토픽으로 발행.
-# direction(payload)으로 위협 종류를 구분: 지게차=back, 인양물=all
-DEFAULT_TOPIC = "crane/2/vibration"
+# 충돌이면 종류 무관 forklift/4/vibration 으로 "right" 단일 발행.
+DEFAULT_TOPIC = "forklift/4/vibration"
+DEFAULT_DIRECTION = "right"
 
 DEFAULT_THREAT_TO_TOPIC = {
     ThreatType.FORKLIFT: DEFAULT_TOPIC,
     ThreatType.DROPZONE: DEFAULT_TOPIC,
 }
 DEFAULT_THREAT_TO_DIRECTION = {
-    ThreatType.FORKLIFT: "back",   # 지게차 충돌 → 후방 부저
-    ThreatType.DROPZONE: "all",    # 인양물 진입 → 전체 부저
+    ThreatType.FORKLIFT: DEFAULT_DIRECTION,
+    ThreatType.DROPZONE: DEFAULT_DIRECTION,
 }
 
 
@@ -53,7 +56,7 @@ async def publish_vibration(
     단일 진동 명령 발행.
 
     Args:
-      topic     : 예) "crane/2/vibration"
+      topic     : 예) "forklift/4/vibration"
       direction : "left" / "back" / "right" / "all" (펌웨어가 인식하는 4종)
       broker    : None이면 .env 의 MQTT_BROKER 사용
     Returns:

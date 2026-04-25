@@ -15,7 +15,7 @@ from .database.store import save_file
 from .database.store.service import USB_BASE_PATH
 from .schemas import MakerCreate, MakerResponse, IncidentLogCreate, IncidentLogResponse, AlertSend, ReportResponse
 from .report import generate_daily_report
-from input.audio import esp32_audio_router
+from input.audio import esp32_audio_router, get_latest_score
 # 카메라 API 필요 시 아래 주석 해제
 # import sys; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "input", "media"))
 # from camera import camera_manager
@@ -61,8 +61,9 @@ async def lifespan(app: FastAPI):
     )
 
     # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성!
+    # --no-audio 를 빼서 realtime_camera 가 ESP32 오디오 score(/audio/score) 를 폴링하도록 함.
     cam_proc = subprocess.Popen(
-        [sys.executable, pipeline_path, "--no-audio", "--no-prompt"]
+        [sys.executable, pipeline_path, "--no-prompt"]
     )
 
     # MQTT 파이프라인 시작
@@ -99,6 +100,13 @@ app.include_router(esp32_audio_router)
 @app.get("/")
 def read_root():
     return {"Hello": "FastAPI", "Status": "Running"}
+
+
+# ── ESP32 오디오 score 노출 (realtime_camera subprocess 가 폴링) ─────────
+@app.get("/audio/score")
+def audio_score():
+    """ESP32 yamnet 최근 결과. realtime_camera.py 가 fusion 입력으로 사용."""
+    return get_latest_score()
 
 
 # ── MQTT Send ─────────────────────────────────────────────────────────

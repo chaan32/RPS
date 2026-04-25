@@ -26,10 +26,10 @@ from risk_output import PairRisk, RiskLevel, ThreatType
 DEFAULT_SERVER_URL = os.getenv("FUSION_SERVER_URL", "http://127.0.0.1:1122")
 
 # 위협 타입 → DB 의 maker_id (FK to makers).
-# 펌웨어가 crane/2/vibration 만 구독하므로 둘 다 maker_id=2 로 묶음.
+# 펌웨어가 forklift/4/vibration 만 구독하므로 둘 다 maker_id=4 로 묶음.
 DEFAULT_THREAT_TO_MAKER_ID = {
-    ThreatType.FORKLIFT: 2,
-    ThreatType.DROPZONE: 2,
+    ThreatType.FORKLIFT: 4,
+    ThreatType.DROPZONE: 4,
 }
 
 
@@ -63,7 +63,7 @@ async def log_pair(
     """
     t2m = threat_to_maker_id or DEFAULT_THREAT_TO_MAKER_ID
     body = {
-        "maker_id": t2m.get(pair.threat_type, 2),
+        "maker_id": t2m.get(pair.threat_type, 4),
         "incident_type": _incident_type_for(pair.level),
         "snapshot_path": snapshot_path or _placeholder_snapshot_path(pair),
         "status": "success",
@@ -106,7 +106,7 @@ async def log_pair_with_snapshot(
       frame_jpeg : cv2.imencode('.jpg', frame)[1].tobytes() 결과 바이트
     """
     t2m = threat_to_maker_id or DEFAULT_THREAT_TO_MAKER_ID
-    maker_id = t2m.get(pair.threat_type, 2)
+    maker_id = t2m.get(pair.threat_type, 4)
     incident_type = _incident_type_for(pair.level)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"realtime_{pair.threat_type.value}_{ts}.jpg"

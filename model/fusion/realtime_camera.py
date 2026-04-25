@@ -4,7 +4,7 @@
   [Cam1 (RTSP)] ──► YOLO+ArUco+homography ──► world coords (worker, forklift)
   [Cam2 (RTSP)] ─┘                                   │
                                                       ▼
-  [로컬 마이크 (background thread)] ──► YAMnet ──► audio_score
+  [ESP32 마이크 → /ws/audio → 서버 YAMnet] ──► /audio/score HTTP 폴링 ──► audio_score
                                                       │
                                                       ▼
                                           RealtimeInference.push(...)
@@ -17,8 +17,8 @@
 
 실행:
   conda activate venv
-  python model/fusion/realtime_camera.py            # 라이브 카메라
-  python model/fusion/realtime_camera.py --no-audio # YAMnet 끄고 카메라만
+  python model/fusion/realtime_camera.py            # ESP32 audio + 라이브 카메라
+  python model/fusion/realtime_camera.py --no-audio # audio=0.05 고정 (오디오 무시)
 
 ESC: 종료
 """
@@ -31,7 +31,6 @@ import time
 import json
 import argparse
 import threading
-import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -153,85 +152,47 @@ _audio_lock = threading.Lock()
 _running = True
 
 
-# ── YAMnet 백그라운드 오디오 스레드 ────────────────────
+# ── ESP32 audio score 폴링 스레드 ──────────────────────
+# 서버(/audio/score) ← esp32_ws.py 가 ESP32 → YAMnet 결과를 보관 중.
+# realtime_camera 는 별도 subprocess 라 메모리 공유가 안 되므로 HTTP 로 가져온다.
+AUDIO_SCORE_URL = os.getenv(
+    "AUDIO_SCORE_URL",
+    f"http://127.0.0.1:{os.getenv('SERVER_PORT', '1122')}/audio/score",
+)
+AUDIO_POLL_SEC = 0.5            # 0.5s 마다 폴링 (yamnet 1.92s 윈도우 대비 충분)
+AUDIO_STALE_SEC = 5.0           # 마지막 갱신 후 이만큼 지나면 score=0
+
+
 def audio_worker(verbose: bool = False) -> None:
-    """로컬 마이크 → YAMnet → audio score 갱신 (1.92s buffer)."""
-    global _running
-    warnings.filterwarnings("ignore")
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    """서버 /audio/score 폴링 → ESP32 yamnet score 를 _audio_state 에 반영."""
+    import urllib.request
+    import urllib.error
 
-    try:
-        import sounddevice as sd
-        import tensorflow_hub as hub
-        from sklearn.metrics.pairwise import cosine_similarity
-    except ImportError as e:
-        print(f"[audio] 패키지 누락: {e}. --no-audio 옵션으로 끄세요.")
-        return
-
-    yamnet_dir = PROJECT_ROOT / "model" / "yamnet"
-    centroid_path = yamnet_dir / "anomaly_centroid.npy"
-    config_path = yamnet_dir / "anomaly_config.json"
-    if not centroid_path.exists():
-        print(f"[audio] centroid 없음: {centroid_path}")
-        return
-
-    centroid = np.load(centroid_path)
-    with open(config_path) as f:
-        cfg = json.load(f)
-
-    SAMPLE_RATE = 16000
-    BUFFER_SEC = 1.92
-    FRAME_SEC = cfg.get("frame_sec", 0.96)
-    HOP_SEC = cfg.get("hop_sec", 0.48)
-    MIN_FRAME_RMS = cfg.get("min_frame_rms", 0.01)
-    BUFFER_SIZE = int(SAMPLE_RATE * BUFFER_SEC)
-    FRAME_LEN = int(FRAME_SEC * SAMPLE_RATE)
-    HOP_LEN = int(HOP_SEC * SAMPLE_RATE)
-
-    print("[audio] YAMnet 로드 중...")
-    yamnet_model = hub.load("https://tfhub.dev/google/yamnet/1")
-    print("[audio] YAMnet 준비 완료, 마이크 시작")
-
+    print(f"[audio] ESP32 score 폴링 시작: {AUDIO_SCORE_URL}")
+    fail_count = 0
     while _running:
         try:
-            audio = sd.rec(BUFFER_SIZE, samplerate=SAMPLE_RATE,
-                           channels=1, dtype="float32")
-            sd.wait()
+            with urllib.request.urlopen(AUDIO_SCORE_URL, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            score = float(data.get("score", 0.0))
+            ts = float(data.get("ts", 0.0))
+            # 너무 오래된 값이면 무시 (ESP32 끊김)
+            if ts > 0 and (time.time() - ts) > AUDIO_STALE_SEC:
+                score = 0.0
+            with _audio_lock:
+                _audio_state["score"] = float(np.clip(score, 0.0, 1.0))
+                _audio_state["ts"] = ts
+            fail_count = 0
+            if verbose:
+                print(f"[audio] score={score:.3f} ts_age={time.time()-ts:.1f}s")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            fail_count += 1
+            if fail_count == 1 or fail_count % 20 == 0:
+                print(f"[audio] /audio/score 연결 실패 ({fail_count}회): {e}")
         except Exception as e:
-            print(f"[audio] 마이크 오류: {e}")
-            time.sleep(1.0)
-            continue
+            print(f"[audio] 폴링 오류: {e}")
 
-        wav = audio.flatten().astype(np.float32)
-        rms = float(np.sqrt(np.mean(wav ** 2)))
-        if rms < 0.003:
-            score = 0.0
-        else:
-            # peak normalize + frame split + cosine similarity
-            peak = float(np.max(np.abs(wav)))
-            if peak > 1e-6:
-                wav = wav * (0.95 / peak)
-            if len(wav) < FRAME_LEN:
-                wav = np.pad(wav, (0, FRAME_LEN - len(wav)))
-            sims = []
-            for start in range(0, len(wav) - FRAME_LEN + 1, HOP_LEN):
-                chunk = wav[start:start + FRAME_LEN]
-                if np.sqrt(np.mean(chunk ** 2)) < MIN_FRAME_RMS:
-                    continue
-                _, embeddings, _ = yamnet_model(chunk.astype(np.float32))
-                emb = embeddings.numpy()[0]
-                sim = float(cosine_similarity(
-                    emb.reshape(1, -1), centroid.reshape(1, -1)
-                )[0][0])
-                sims.append(sim)
-            score = max(sims) if sims else 0.0
-
-        with _audio_lock:
-            _audio_state["score"] = float(np.clip(score, 0.0, 1.0))
-            _audio_state["ts"] = time.time()
-
-        if verbose:
-            print(f"[audio] max_sim={score:.3f}  rms={rms:.4f}")
+        time.sleep(AUDIO_POLL_SEC)
 
 
 # ── 카메라 detection 병합 ──────────────────────────────
