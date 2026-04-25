@@ -8,7 +8,7 @@ from aiomqtt import Client, MqttError
 from sqlalchemy import select
 from datetime import date as date_cls
 from fastapi import HTTPException, Query
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from .database import engine, AsyncSessionLocal, Base, Maker, IncidentLog, Report
 from .pipeline import MQTTHandler
 from .database.store import save_file
@@ -53,7 +53,6 @@ async def lifespan(app: FastAPI):
     # realtime_camera.py 내부에서 cam1/cam2_homography.json 존재 여부 자동 체크 +
     # YOLO + ArUco + 월드 변환 + PairwiseInteractionFusionModel 추론까지 수행.
     # 화면에는 cam1/cam2 영상에 fusion risk 게이지와 ALERT 배너가 오버레이됨.
-    # --no-audio  : YAMnet 오디오 분석 비활성 (마이크 없는 환경)
     # --no-prompt : 캘리브레이션 자동 캡처 (인자 호환성)
     import subprocess, sys
     pipeline_path = os.path.join(
@@ -62,7 +61,7 @@ async def lifespan(app: FastAPI):
 
     # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성!
     cam_proc = subprocess.Popen(
-        [sys.executable, pipeline_path, "--no-audio", "--no-prompt"]
+        [sys.executable, pipeline_path, "--no-prompt"]
     )
 
     # MQTT 파이프라인 시작
@@ -277,6 +276,38 @@ async def get_report_html(report_id: int):
 </body>
 </html>"""
     return HTMLResponse(content=page)
+
+
+# ── ArUco Identify ────────────────────────────────────────────────────
+
+@app.post("/aruco/identify")
+async def aruco_identify(file: UploadFile = File(...)):
+    """업로드한 이미지에서 ArUco 마커를 감지하고, 각 마커에 ID 라벨을
+    그려 넣은 JPEG 이미지를 반환한다.
+
+    응답 헤더:
+        X-Detected-IDs: 감지된 마커 ID 목록 (쉼표 구분, 없으면 빈 문자열)
+    """
+    import cv2
+    import numpy as np
+    from input.media.identify_markers import annotate_markers
+
+    contents = await file.read()
+    arr = np.frombuffer(contents, dtype=np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail="이미지 디코딩 실패")
+
+    annotated, ids = annotate_markers(image)
+    ok, buf = cv2.imencode(".jpg", annotated)
+    if not ok:
+        raise HTTPException(status_code=500, detail="이미지 인코딩 실패")
+
+    return Response(
+        content=buf.tobytes(),
+        media_type="image/jpeg",
+        headers={"X-Detected-IDs": ",".join(str(i) for i in ids)},
+    )
 
 
 # ── Camera (현재 웹에서 미사용 — 필요 시 주석 해제) ─────────────────────
