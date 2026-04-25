@@ -197,33 +197,100 @@ def audio_worker(verbose: bool = False) -> None:
 
 # ── 카메라 detection 병합 ──────────────────────────────
 BOX_CLASS_NAMES = ("box_1", "box_2")   # 크레인 인양물 (= 동적 dropzone 위치)
+DZ_SMOOTHING_FRAMES = 5                # 최근 N 프레임 median filter (시간 평활화)
+MAX_WORKERS = 3                        # 동시 추적 가능한 작업자 수
+
+# ── 작업자 운동학 (heading 추정 + 위협 상대 방향) ────
+import math
+from collections import deque as _deque
+
+
+class WorkerKinematics:
+    """worker별 위치 이력으로 heading(facing 방향) 추정.
+
+    - 최근 N 프레임 위치 평균 속도 → heading 갱신 (속도 < 0.05m/s면 직전 값 유지)
+    - default heading = π/2 (북쪽, +Y) — 검출 직후 첫 frame 처리용
+    - collision_direction(threat_xy)로 worker body frame 기준 4방향(front/left/right/rear)
+      반환
+    """
+    HISTORY_LEN = 5
+    MIN_SPEED = 0.05    # m/frame 미만이면 정지 — heading 갱신 X
+
+    def __init__(self):
+        self.history = _deque(maxlen=self.HISTORY_LEN)
+        self.heading = math.pi / 2     # 기본값: +Y (북쪽)
+        self.last_xy = None
+
+    def update(self, xy: tuple):
+        self.history.append(xy)
+        self.last_xy = xy
+        if len(self.history) >= 3:
+            pts = list(self.history)
+            dx = pts[-1][0] - pts[0][0]
+            dy = pts[-1][1] - pts[0][1]
+            mean_step = math.hypot(dx, dy) / max(1, len(pts) - 1)
+            if mean_step > self.MIN_SPEED:
+                self.heading = math.atan2(dy, dx)
+
+    def collision_direction(self, threat_xy) -> str:
+        """worker body frame 기준 위협 방향. 'front'|'left'|'right'|'rear'."""
+        if self.last_xy is None:
+            return "front"
+        dx = threat_xy[0] - self.last_xy[0]
+        dy = threat_xy[1] - self.last_xy[1]
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return "front"
+        threat_angle = math.atan2(dy, dx)
+        rel = threat_angle - self.heading
+        # [-π, π]로 정규화
+        while rel > math.pi:
+            rel -= 2 * math.pi
+        while rel < -math.pi:
+            rel += 2 * math.pi
+        deg = math.degrees(rel)
+        # body frame: 정면=0°, 좌측=+90°, 우측=-90°, 후방=±180°
+        if -45 < deg <= 45:
+            return "front"
+        if 45 < deg <= 135:
+            return "left"
+        if -135 <= deg <= -45:
+            return "right"
+        return "rear"
 
 
 def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
-    """cam1 + cam2 detection list → (worker_xy, forklift_xy, dropzone_xy).
+    """cam1 + cam2 detection list → (workers_xy, forklift_xy, dropzone_xy).
 
-    - worker  : ArUco track_id 매칭으로 카메라 간 평균
+    Returns:
+      workers_xy : dict {worker_id_str: (x, y)}  — ArUco 식별된 작업자만
+      forklift_xy: tuple or None
+      dropzone_xy: tuple or None  (box_1/box_2 = 인양물 평균 좌표)
+
+    - worker  : ArUco worker_id 단위로 카메라 간 평균 (식별 못 된 worker는 제외)
     - forklift: 모든 카메라 평균
     - dropzone: box_1, box_2 (인양물) 평균. 없으면 None (이전 값 유지).
     """
-    workers, forklifts, boxes = {}, [], []
+    workers_by_id: dict[str, list] = {}
+    forklifts, boxes = [], []
     for d in d1 + d2:
         t = d["type"]
         if t == "worker":
-            tid = d.get("track_id")
-            if tid is None:
-                tid = f"_anon_{len(workers)}"
-            workers.setdefault(tid, []).append((d["world"]["x"], d["world"]["y"]))
+            wid = d.get("worker_id")
+            if wid is None:
+                # ArUco 식별 안 된 작업자는 무시 (W01/W02/W03 단위로 다루기 위해)
+                continue
+            workers_by_id.setdefault(wid, []).append(
+                (d["world"]["x"], d["world"]["y"])
+            )
         elif t == "forklift":
             forklifts.append((d["world"]["x"], d["world"]["y"]))
         elif t in BOX_CLASS_NAMES:
             boxes.append((d["world"]["x"], d["world"]["y"]))
 
-    worker_xy = None
-    if workers:
-        first_tid = list(workers.keys())[0]
-        pts = workers[first_tid]
-        worker_xy = (
+    # worker_id별 cam1+cam2 평균
+    workers_xy: dict[str, tuple[float, float]] = {}
+    for wid, pts in workers_by_id.items():
+        workers_xy[wid] = (
             float(np.mean([p[0] for p in pts])),
             float(np.mean([p[1] for p in pts])),
         )
@@ -237,12 +304,63 @@ def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
 
     dropzone_xy = None
     if boxes:
-        # 다중 인양물이면 평균. 단일 부하면 그대로.
         dropzone_xy = (
             float(np.mean([p[0] for p in boxes])),
             float(np.mean([p[1] for p in boxes])),
         )
-    return worker_xy, forklift_xy, dropzone_xy
+    return workers_xy, forklift_xy, dropzone_xy
+
+
+# ── 한글 텍스트 렌더링 (cv2.putText는 한글 미지원) ───
+_KOREAN_FONT_CACHE = {}
+
+def _get_korean_font(size: int):
+    """Windows에 흔한 한글 폰트 중 하나 로드 (캐시)."""
+    if size in _KOREAN_FONT_CACHE:
+        return _KOREAN_FONT_CACHE[size]
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return None
+    candidates = [
+        "C:/Windows/Fonts/malgun.ttf",      # 맑은 고딕
+        "C:/Windows/Fonts/malgunbd.ttf",    # 맑은 고딕 Bold
+        "C:/Windows/Fonts/gulim.ttc",       # 굴림
+        "C:/Windows/Fonts/NanumGothic.ttf", # 나눔고딕
+    ]
+    font = None
+    for fp in candidates:
+        try:
+            font = ImageFont.truetype(fp, size)
+            break
+        except (OSError, IOError):
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+    _KOREAN_FONT_CACHE[size] = font
+    return font
+
+
+def put_korean(img, text, position, font_size=20, color_bgr=(255, 255, 255)):
+    """OpenCV BGR 이미지 위에 한글 텍스트 렌더링.
+
+    position: (x, y) — 텍스트 좌상단 기준
+    color_bgr: BGR 순서
+    Returns: 새 BGR 이미지 (원본 미변경)
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        # PIL 없으면 fallback (한글은 깨지지만 죽지는 않게)
+        cv2.putText(img, text, position, cv2.FONT_HERSHEY_SIMPLEX,
+                    font_size / 30.0, color_bgr, 2)
+        return img
+    font = _get_korean_font(font_size)
+    pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    pil_color = (int(color_bgr[2]), int(color_bgr[1]), int(color_bgr[0]))
+    draw.text(position, text, font=font, fill=pil_color)
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 # ── 카메라 프레임 위 risk 오버레이 ───────────────────
@@ -264,26 +382,19 @@ def _risk_color(value: float, threshold: float):
 
 
 def draw_camera_overlay(
-    frame, detections, risk_matrix, threshold=0.8,
+    frame, detections, risks_per_worker, threshold=0.8,
 ):
-    """카메라 프레임에 detection + risk 오버레이.
+    """카메라 프레임에 detection + risk 오버레이 (멀티 워커).
 
-    - bbox 색: worker는 risk에 따라, 다른 객체는 type 기반
-    - 우측 상단 패널: vs_Forklift / vs_DropZone 게이지
-    - 상단 ALERT 배너: max risk ≥ threshold 시
-    - 작업자 ↔ 위협 연결선: 같은 카메라 프레임 내에 둘 다 보일 때
+    Args:
+      detections: world_pipeline 출력. worker는 d["worker_id"]로 식별됨
+      risks_per_worker: dict {wid: (1, 2) ndarray} — wid별 risk_matrix
+      threshold: 알림 발송 임계값
     """
     out = frame.copy()
     H, W = out.shape[:2]
 
-    # worker bbox 색 결정
-    if risk_matrix is not None:
-        max_risk = float(risk_matrix.max())
-        worker_color = _risk_color(max_risk, threshold)
-    else:
-        worker_color = _TYPE_COLORS["worker"]
-
-    # detection 분류 (선 그릴 때 위치 참조)
+    # detection 분류
     workers, threats = [], []
     for d in detections:
         if d["type"] == "worker":
@@ -291,146 +402,182 @@ def draw_camera_overlay(
         elif d["type"] in ("forklift", "box_1", "box_2"):
             threats.append(d)
 
-    # ── 위협 연결선 (worker가 있고 risk가 warn 이상일 때) ──
-    if risk_matrix is not None and workers:
-        f_risk = float(risk_matrix[0, 0])
-        d_risk = float(risk_matrix[0, 1])
-        for w in workers:
-            wx1, wy1, wx2, wy2 = [int(v) for v in w["bbox_px"]]
-            wcx, wcy = (wx1 + wx2) // 2, (wy1 + wy2) // 2
-            for t in threats:
-                tx1, ty1, tx2, ty2 = [int(v) for v in t["bbox_px"]]
-                tcx, tcy = (tx1 + tx2) // 2, (ty1 + ty2) // 2
-                if t["type"] == "forklift":
-                    risk_for_line = f_risk
-                else:
-                    risk_for_line = d_risk
-                if risk_for_line >= 0.4:
-                    line_color = _risk_color(risk_for_line, threshold)
-                    line_thickness = 3 if risk_for_line >= threshold else 2
-                    cv2.line(out, (wcx, wcy), (tcx, tcy),
-                             line_color, line_thickness, lineType=cv2.LINE_AA)
-                    # 거리 표시
-                    mid = ((wcx + tcx) // 2, (wcy + tcy) // 2)
-                    cv2.putText(out, f"{risk_for_line:.2f}",
-                                (mid[0] + 5, mid[1] - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                (0, 0, 0), 4)
-                    cv2.putText(out, f"{risk_for_line:.2f}",
-                                (mid[0] + 5, mid[1] - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                line_color, 2)
+    # ── 위협 연결선 (worker별) ──
+    for w in workers:
+        wid = w.get("worker_id")
+        if wid is None or wid not in risks_per_worker:
+            continue
+        risk = risks_per_worker[wid]
+        f_risk = float(risk[0, 0])
+        d_risk = float(risk[0, 1])
+        wx1, wy1, wx2, wy2 = [int(v) for v in w["bbox_px"]]
+        wcx, wcy = (wx1 + wx2) // 2, (wy1 + wy2) // 2
+        for t in threats:
+            tx1, ty1, tx2, ty2 = [int(v) for v in t["bbox_px"]]
+            tcx, tcy = (tx1 + tx2) // 2, (ty1 + ty2) // 2
+            risk_for_line = f_risk if t["type"] == "forklift" else d_risk
+            if risk_for_line >= 0.4:
+                lc = _risk_color(risk_for_line, threshold)
+                th = 3 if risk_for_line >= threshold else 2
+                cv2.line(out, (wcx, wcy), (tcx, tcy), lc, th,
+                         lineType=cv2.LINE_AA)
+                mid = ((wcx + tcx) // 2, (wcy + tcy) // 2)
+                txt = f"{wid}:{risk_for_line:.2f}"
+                cv2.putText(out, txt, (mid[0] + 5, mid[1] - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+                cv2.putText(out, txt, (mid[0] + 5, mid[1] - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, lc, 2)
 
     # ── Detection bbox + 라벨 ──
     for d in detections:
         x1, y1, x2, y2 = [int(v) for v in d["bbox_px"]]
         if d["type"] == "worker":
-            c = worker_color
+            wid = d.get("worker_id")
+            if wid and wid in risks_per_worker:
+                max_r = float(risks_per_worker[wid].max())
+                c = _risk_color(max_r, threshold)
+            else:
+                c = _TYPE_COLORS["worker"]
+            thickness = 3
+            wx, wy = d["world"]["x"], d["world"]["y"]
+            tag = wid if wid else "worker?"
+            label = f'{tag} ({wx:.2f}, {wy:.2f})m'
         else:
             c = _TYPE_COLORS.get(d["type"], (200, 200, 200))
-        thickness = 3 if d["type"] == "worker" else 2
+            thickness = 2
+            wx, wy = d["world"]["x"], d["world"]["y"]
+            label = f'{d["type"]} ({wx:.2f}, {wy:.2f})m'
         cv2.rectangle(out, (x1, y1), (x2, y2), c, thickness)
-
-        wx, wy = d["world"]["x"], d["world"]["y"]
-        label = f'{d["type"]} ({wx:.2f}, {wy:.2f})m'
         cv2.putText(out, label, (x1, max(25, y1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
         cv2.putText(out, label, (x1, max(25, y1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, c, 2)
 
-    # ── 우측 상단 Risk 패널 ──
-    panel_w = 300
-    panel_h = 180
+    # ── 우측 상단 Risk 패널 (per-worker rows) ──
+    panel_w = 320
+    panel_h = 60 + 36 * max(1, len(risks_per_worker))
+    panel_h = min(panel_h, H - 20)
     px = W - panel_w - 10
     py = 10
     overlay = out.copy()
     cv2.rectangle(overlay, (px, py), (W - 10, py + panel_h), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, out, 0.3, 0, out)
     cv2.rectangle(out, (px, py), (W - 10, py + panel_h), (255, 255, 255), 2)
-    cv2.putText(out, "FUSION RISK", (px + 10, py + 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(out, "FUSION RISK (per worker)", (px + 10, py + 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    if risk_matrix is not None:
-        f_risk = float(risk_matrix[0, 0])
-        d_risk = float(risk_matrix[0, 1])
-
-        def gauge(label, value, y):
-            cv2.putText(out, f"{label}: {value:.2f}", (px + 10, y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                        _risk_color(value, threshold), 2)
-            bar_x = px + 10
-            bar_y = y + 8
-            bar_w_max = panel_w - 30
-            cv2.rectangle(out, (bar_x, bar_y),
-                          (bar_x + bar_w_max, bar_y + 12),
-                          (80, 80, 80), -1)
-            v = max(0.0, min(1.0, value))
-            cv2.rectangle(out, (bar_x, bar_y),
-                          (bar_x + int(bar_w_max * v), bar_y + 12),
-                          _risk_color(value, threshold), -1)
-            # threshold 표시 마커
-            tx = bar_x + int(bar_w_max * threshold)
-            cv2.line(out, (tx, bar_y - 2), (tx, bar_y + 14), (255, 255, 255), 1)
-
-        gauge("vs Forklift", f_risk, py + 65)
-        gauge("vs DropZone", d_risk, py + 130)
+    if risks_per_worker:
+        row_y = py + 55
+        for wid in sorted(risks_per_worker.keys()):
+            risk = risks_per_worker[wid]
+            f_r = float(risk[0, 0])
+            d_r = float(risk[0, 1])
+            f_c = _risk_color(f_r, threshold)
+            d_c = _risk_color(d_r, threshold)
+            cv2.putText(out,
+                        f"{wid}: F={f_r:.2f}  DZ={d_r:.2f}",
+                        (px + 10, row_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                        f_c if f_r >= d_r else d_c, 2)
+            row_y += 32
     else:
-        cv2.putText(out, "(buffering...)", (px + 10, py + 80),
+        cv2.putText(out, "(buffering...)", (px + 10, py + 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
     # ── 상단 ALERT 배너 ──
-    if risk_matrix is not None:
-        f_risk = float(risk_matrix[0, 0])
-        d_risk = float(risk_matrix[0, 1])
-        max_risk = max(f_risk, d_risk)
-        if max_risk >= threshold:
-            if f_risk >= threshold and d_risk >= threshold:
-                msg = "!! COLLISION + DROPZONE !!"
-            elif f_risk >= threshold:
-                msg = "!! FORKLIFT COLLISION !!"
+    if risks_per_worker:
+        any_fork = any(float(r[0, 0]) >= threshold for r in risks_per_worker.values())
+        any_dz = any(float(r[0, 1]) >= threshold for r in risks_per_worker.values())
+        if any_fork or any_dz:
+            if any_fork and any_dz:
+                msg = "!! 지게차 충돌 + 인양물 위험 !!"
+            elif any_fork:
+                msg = "!! 지게차 충돌 위험 !!"
             else:
-                msg = "!! DROPZONE INTRUSION !!"
+                msg = "!! 인양물 진입 위험 !!"
             cv2.rectangle(out, (0, 0), (W, 60), (0, 0, 255), -1)
-            text_size = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
-            tx = max(20, (W - text_size[0]) // 2)
-            cv2.putText(out, msg, (tx, 42),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                        (255, 255, 255), 3)
+            font = _get_korean_font(34)
+            try:
+                if hasattr(font, "getbbox"):
+                    bbox = font.getbbox(msg)
+                    text_w = bbox[2] - bbox[0]
+                else:
+                    text_w = font.getsize(msg)[0]
+            except Exception:
+                text_w = len(msg) * 22
+            tx = max(20, (W - text_w) // 2)
+            out = put_korean(out, msg, (tx, 12), 34, (255, 255, 255))
 
     return out
 
 
 # ── BEV 시각화 ────────────────────────────────────────
 def render_bev(
-    worker_xy, forklift_xy, audio_score, risk_matrix,
+    workers_xy, forklift_xy, audio_score, risks_per_worker,
+    threshold=DEFAULT_THRESHOLD,
     dropzone_xy=None, dropzone_radius=None,
-    workspace=((-2.0, 0.0), (0.0, 3.0)),
-    scale_px=180,
+    worker_headings=None,                      # dict {wid: heading_radians}
+    view_bounds=((-4.0, 2.0), (-1.5, 4.5)),     # ArUco 사각형(2x3m)을 중앙에 + 주변 여백
+    aruco_bounds=((-2.0, 0.0), (0.0, 3.0)),     # 실제 ArUco 사각형 (workspace)
+    scale_px=120,
 ):
-    """작업공간 평면도 + 실시간 risk 게이지."""
-    (x_min, x_max), (y_min, y_max) = workspace
-    W = int((x_max - x_min) * scale_px) + 200
+    """확장 BEV 평면도 + 멀티 워커 risk 게이지.
+
+    Args:
+      workers_xy: dict {wid: (x, y)}
+      risks_per_worker: dict {wid: (1, 2) ndarray}
+    """
+    (x_min, x_max), (y_min, y_max) = view_bounds
+    (ax_min, ax_max), (ay_min, ay_max) = aruco_bounds
+    W = int((x_max - x_min) * scale_px) + 200    # +200: 우측 패널 공간
     H = int((y_max - y_min) * scale_px) + 100
-    img = np.full((H, W, 3), 240, dtype=np.uint8)
+    img = np.full((H, W, 3), 245, dtype=np.uint8)
 
     def w2px(wx, wy):
-        # wx ∈ [x_min, x_max] → px ∈ [50, 50 + (x_max-x_min)*scale_px]
-        # wy ∈ [y_min, y_max] → py ∈ [H-50 - (y_max-y_min)*scale_px, H-50]  (Y 뒤집힘)
         px = int(50 + (wx - x_min) * scale_px)
         py = int(H - 50 - (wy - y_min) * scale_px)
         return px, py
 
-    # 작업공간 박스
-    p1 = w2px(x_min, y_min)
-    p2 = w2px(x_max, y_max)
-    cv2.rectangle(img, p1, p2, (180, 180, 180), 2)
+    # 외곽 view 영역 박스 (전체 BEV 경계)
+    p_view1 = w2px(x_min, y_min)
+    p_view2 = w2px(x_max, y_max)
+    cv2.rectangle(img, p_view1, p_view2, (200, 200, 200), 1)
 
-    # ArUco 마커 4점
+    # 격자 (1m 간격) — 좌표 감 잡기
+    for gx in range(int(np.ceil(x_min)), int(np.floor(x_max)) + 1):
+        p1 = w2px(gx, y_min)
+        p2 = w2px(gx, y_max)
+        cv2.line(img, p1, p2, (225, 225, 225), 1)
+    for gy in range(int(np.ceil(y_min)), int(np.floor(y_max)) + 1):
+        p1 = w2px(x_min, gy)
+        p2 = w2px(x_max, gy)
+        cv2.line(img, p1, p2, (225, 225, 225), 1)
+
+    # 원점 표시
+    if x_min <= 0 <= x_max and y_min <= 0 <= y_max:
+        ox, oy = w2px(0, 0)
+        cv2.line(img, (ox - 10, oy), (ox + 10, oy), (180, 180, 180), 1)
+        cv2.line(img, (ox, oy - 10), (ox, oy + 10), (180, 180, 180), 1)
+
+    # ── ArUco 작업공간 (강조: 옅은 채움 + 굵은 테두리) ──
+    p_a1 = w2px(ax_min, ay_min)
+    p_a2 = w2px(ax_max, ay_max)
+    overlay = img.copy()
+    cv2.rectangle(overlay, p_a1, p_a2, (220, 235, 250), -1)   # 연한 파랑 채움
+    cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+    cv2.rectangle(img, p_a1, p_a2, (80, 120, 180), 2)          # 진한 파랑 테두리
+    # 라벨
+    label_pt = (p_a1[0] + 5, p_a1[1] + 18)
+    cv2.putText(img, "ArUco workspace (2m x 3m)", label_pt,
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 120, 180), 1)
+
+    # ArUco 마커 4점 (실제 좌표 위치)
     for (mx, my, name) in [(-2, 0, "27"), (-2, 3, "22"), (0, 0, "38"), (0, 3, "24")]:
         px, py = w2px(mx, my)
-        cv2.circle(img, (px, py), 7, (60, 60, 60), -1)
-        cv2.putText(img, name, (px - 25, py + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 60, 60), 1)
+        cv2.circle(img, (px, py), 8, (40, 80, 160), -1)
+        cv2.circle(img, (px, py), 8, (255, 255, 255), 1)
+        cv2.putText(img, name, (px - 28, py + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (40, 80, 160), 1)
 
     # Dropzone (동적 위치 우선, 없으면 학습 default)
     dz_cx, dz_cy = (dropzone_xy if dropzone_xy is not None
@@ -443,14 +590,40 @@ def render_bev(
                 (dz_px[0] - 25, dz_px[1] + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, dz_color, 2)
 
-    # Worker
-    if worker_xy is not None:
-        wpx = w2px(*worker_xy)
-        cv2.circle(img, wpx, 12, (0, 200, 0), -1)
-        cv2.putText(img, "W", (wpx[0] - 6, wpx[1] + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # ── Workers (worker_id별 색상은 risk에 따라) ──
+    if workers_xy:
+        for wid in sorted(workers_xy.keys()):
+            xy = workers_xy[wid]
+            wpx = w2px(*xy)
+            risk = risks_per_worker.get(wid)
+            if risk is not None:
+                max_r = float(risk.max())
+                color = _risk_color(max_r, threshold)
+            else:
+                color = (0, 200, 0)
+            cv2.circle(img, wpx, 13, color, -1)
+            cv2.circle(img, wpx, 13, (255, 255, 255), 2)
+            cv2.putText(img, wid, (wpx[0] - 22, wpx[1] - 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+            cv2.putText(img, wid, (wpx[0] - 22, wpx[1] - 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-    # Forklift
+            # heading 화살표 (작업자가 바라보는 방향)
+            if worker_headings is not None and wid in worker_headings:
+                hd = worker_headings[wid]
+                # world heading vector → BEV pixel offset
+                # world: x→오른쪽(+), y→위(+).  BEV에선 y축이 뒤집힘 (위쪽이 +y).
+                arrow_len_px = 28
+                end_px = (
+                    int(wpx[0] + arrow_len_px * math.cos(hd)),
+                    int(wpx[1] - arrow_len_px * math.sin(hd)),  # y 반전
+                )
+                cv2.arrowedLine(img, wpx, end_px, (0, 0, 0), 4,
+                                tipLength=0.35, line_type=cv2.LINE_AA)
+                cv2.arrowedLine(img, wpx, end_px, (255, 255, 255), 2,
+                                tipLength=0.35, line_type=cv2.LINE_AA)
+
+    # ── Forklift ──
     if forklift_xy is not None:
         fpx = w2px(*forklift_xy)
         cv2.rectangle(img, (fpx[0] - 15, fpx[1] - 10),
@@ -458,49 +631,58 @@ def render_bev(
         cv2.putText(img, "F", (fpx[0] - 5, fpx[1] + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    # Risk 게이지 (오른쪽)
-    panel_x = W - 180
+    # ── Risk 패널 (오른쪽, per-worker rows) ──
+    panel_x = W - 200
     cv2.rectangle(img, (panel_x, 20), (W - 20, H - 20), (255, 255, 255), -1)
     cv2.rectangle(img, (panel_x, 20), (W - 20, H - 20), (200, 200, 200), 2)
     cv2.putText(img, "RISK", (panel_x + 10, 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
-    def gauge(label, value, y, color_lo, color_hi):
+    def gauge(label, value, y, color):
         cv2.putText(img, label, (panel_x + 10, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50, 50, 50), 1)
-        cv2.rectangle(img, (panel_x + 10, y + 10),
-                      (panel_x + 150, y + 30), (220, 220, 220), -1)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (50, 50, 50), 1)
+        cv2.rectangle(img, (panel_x + 10, y + 8),
+                      (panel_x + 170, y + 22), (220, 220, 220), -1)
         v = float(np.clip(value, 0, 1))
-        bar_w = int(140 * v)
-        # 색: 파랑 → 빨강
-        if v > 0.8:
-            c = (0, 0, 255)
-        elif v > 0.4:
-            c = (0, 200, 255)
-        else:
-            c = (200, 200, 0)
-        cv2.rectangle(img, (panel_x + 10, y + 10),
-                      (panel_x + 10 + bar_w, y + 30), c, -1)
-        cv2.putText(img, f"{v:.2f}", (panel_x + 100, y + 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+        cv2.rectangle(img, (panel_x + 10, y + 8),
+                      (panel_x + 10 + int(160 * v), y + 22), color, -1)
+        # threshold 마커
+        tx = panel_x + 10 + int(160 * threshold)
+        cv2.line(img, (tx, y + 6), (tx, y + 24), (255, 255, 255), 1)
+        cv2.putText(img, f"{v:.2f}", (panel_x + 130, y + 38),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
 
-    if risk_matrix is not None:
-        gauge("vs Forklift", risk_matrix[0, 0], 80, "lo", "hi")
-        gauge("vs DropZone", risk_matrix[0, 1], 160, "lo", "hi")
+    if risks_per_worker:
+        row_y = 75
+        for wid in sorted(risks_per_worker.keys()):
+            risk = risks_per_worker[wid]
+            f_r = float(risk[0, 0])
+            d_r = float(risk[0, 1])
+            cv2.putText(img, wid, (panel_x + 10, row_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+            row_y += 22
+            gauge("vs Forklift", f_r, row_y, _risk_color(f_r, threshold))
+            row_y += 45
+            gauge("vs DropZone", d_r, row_y, _risk_color(d_r, threshold))
+            row_y += 55
     else:
         cv2.putText(img, "(buffering...)", (panel_x + 10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
 
-    gauge("Audio", audio_score, 240, "lo", "hi")
+    # 오디오 게이지 (항상 표시, 패널 하단)
+    audio_y = H - 110
+    gauge("Audio", audio_score, audio_y,
+          (0, 0, 255) if audio_score >= 0.65 else
+          (0, 200, 255) if audio_score >= 0.4 else (200, 200, 0))
 
-    # 알림 배너
-    if risk_matrix is not None:
-        max_risk = float(risk_matrix.max())
-        if max_risk >= DEFAULT_THRESHOLD:
-            cv2.rectangle(img, (panel_x + 5, H - 70),
-                          (W - 25, H - 30), (0, 0, 255), -1)
-            cv2.putText(img, "!! ALERT !!", (panel_x + 20, H - 42),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    # ── 알림 배너 ──
+    if risks_per_worker:
+        any_alert = any(float(r.max()) >= threshold for r in risks_per_worker.values())
+        if any_alert:
+            cv2.rectangle(img, (panel_x + 5, H - 65),
+                          (W - 25, H - 25), (0, 0, 255), -1)
+            img = put_korean(img, "!! 위험 감지 !!",
+                             (panel_x + 25, H - 60), 22, (255, 255, 255))
 
     return img
 
@@ -526,8 +708,14 @@ def main():
         print(f"체크포인트 없음: {ckpt}")
         sys.exit(1)
     model = load_model(str(ckpt), device="cpu")
-    rt = RealtimeInference(model, device="cpu")
     print(f"[fusion] 모델 로드: {ckpt.name}")
+
+    # worker별 독립 RealtimeInference 인스턴스 관리.
+    # 같은 모델 객체를 공유하므로 메모리 부담 없음.
+    trackers: dict[str, RealtimeInference] = {}
+    last_seen: dict[str, float] = {}
+    kinematics: dict[str, WorkerKinematics] = {}
+    EVICTION_SEC = 2.0   # N초 이상 미감지 시 tracker 제거
 
     # ── 카메라 ──
     from camera import VideoStream
@@ -582,6 +770,15 @@ def main():
     last_print = 0.0
     has_live_dz = False           # 인양물 검출되어 dropzone 갱신된 적 있는지
 
+    # 인양물 BEV 좌표 시간 평활화 버퍼 (최근 N 프레임 median)
+    from collections import deque
+    dz_history = deque(maxlen=DZ_SMOOTHING_FRAMES)
+
+    # 현재 적용 중인 dropzone (live 모드 아니면 default)
+    import numpy as _np_main
+    current_dz_center = _np_main.array(DZ_CENTER, dtype=_np_main.float32)
+    current_dz_radius = float(DZ_RADIUS)
+
     try:
         while _running:
             now = time.time()
@@ -595,18 +792,25 @@ def main():
             d1 = extract_detections_with_world(f1, "cam1") if ret1 and f1 is not None else []
             d2 = extract_detections_with_world(f2, "cam2") if ret2 and f2 is not None else []
 
-            worker_xy, forklift_xy, dropzone_xy = pick_positions(d1, d2)
+            workers_xy, forklift_xy, dropzone_xy = pick_positions(d1, d2)
 
             with _audio_lock:
                 audio_score = _audio_state["score"]
 
-            # 인양물 검출되면 dropzone 좌표 갱신 (없으면 직전 값 유지)
+            # 인양물 검출되면 dz 좌표 갱신. 공중 객체는 homography 오차가 크므로
+            # 최근 N 프레임 median 필터로 안정화.
             if dropzone_xy is not None:
-                rt.update_dropzone(center=dropzone_xy)
+                dz_history.append(dropzone_xy)
+                xs = sorted(p[0] for p in dz_history)
+                ys = sorted(p[1] for p in dz_history)
+                mid = len(xs) // 2
+                smoothed_dz = (xs[mid], ys[mid])
+                current_dz_center = _np_main.array(smoothed_dz, dtype=_np_main.float32)
                 has_live_dz = True
+                # 모든 활성 tracker에 전파
+                for tr in trackers.values():
+                    tr.update_dropzone(center=smoothed_dz)
 
-            # buffer push (worker가 없으면 기본값으로 멀리 둠 → safe)
-            push_worker = worker_xy if worker_xy else (-0.3, 5.0)
             crane_active = 0  # TODO: MQTT crane state
             rt.push(forklift_xy, push_worker, audio_score, crane_active)
 
@@ -648,22 +852,27 @@ def main():
                               f"prob={p.prob:.3f} ({p.level.value})")
 
             # ── 시각화 ──
-            # live dropzone이 들어왔으면 해당 좌표를 BEV에 빨간색으로 표시,
-            # 아니면 학습 default(-1.5, 2.0)를 회색으로
-            current_dz = tuple(rt._dropzone_center.tolist()) if has_live_dz else None
-            current_dz_r = float(rt._dropzone_radius) if has_live_dz else None
+            bev_dz_xy = tuple(current_dz_center.tolist()) if has_live_dz else None
+            bev_dz_r = current_dz_radius if has_live_dz else None
+            bev_headings = {wid: k.heading for wid, k in kinematics.items()}
             bev = render_bev(
-                worker_xy, forklift_xy, audio_score, risk,
-                dropzone_xy=current_dz, dropzone_radius=current_dz_r,
+                workers_xy, forklift_xy, audio_score, risks_per_worker,
+                threshold=args.threshold,
+                dropzone_xy=bev_dz_xy, dropzone_radius=bev_dz_r,
+                worker_headings=bev_headings,
             )
             cv2.imshow("Fusion BEV", bev)
 
             if not args.no_frames:
                 if ret1 and f1 is not None:
-                    overlay1 = draw_camera_overlay(f1, d1, risk, args.threshold)
+                    overlay1 = draw_camera_overlay(
+                        f1, d1, risks_per_worker, args.threshold
+                    )
                     cv2.imshow("cam1 + risk", cv2.resize(overlay1, (900, 600)))
                 if ret2 and f2 is not None:
-                    overlay2 = draw_camera_overlay(f2, d2, risk, args.threshold)
+                    overlay2 = draw_camera_overlay(
+                        f2, d2, risks_per_worker, args.threshold
+                    )
                     cv2.imshow("cam2 + risk", cv2.resize(overlay2, (900, 600)))
 
             if cv2.waitKey(1) & 0xFF == 27:

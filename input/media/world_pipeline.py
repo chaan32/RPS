@@ -45,6 +45,28 @@ load_dotenv(PROJECT_ROOT / ".env")
 CALIBRATION_DIR = PROJECT_ROOT / "calibration"
 
 
+# ── 작업자 식별용 ArUco ────────────────────────────────────────────────
+# 작업자별 고유 ArUco 마커 (조끼 등에 부착). 검출되면 해당 worker_id 부여.
+# workspace 코너 마커(22/24/27/38)와 ID 충돌 방지: 5, 10, 15 사용.
+WORKER_ARUCO_MAP: dict[int, str] = {
+    5: "W01",
+    10: "W02",
+    15: "W03",
+}
+_aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
+_aruco_params = cv2.aruco.DetectorParameters()
+# 작은/원거리 작업자 마커 감지 강화
+_aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+_aruco_params.adaptiveThreshWinSizeMin = 3
+_aruco_params.adaptiveThreshWinSizeMax = 23
+_aruco_params.adaptiveThreshWinSizeStep = 10
+_aruco_params.minMarkerPerimeterRate = 0.01  # default 0.03 — 멀리 있는 작은 마커도 감지
+_aruco_detector = cv2.aruco.ArucoDetector(_aruco_dict, _aruco_params)
+
+# 환경변수 DEBUG_ARUCO=1 이면 매 프레임 감지된 모든 ID 콘솔 출력
+_DEBUG_ARUCO = os.getenv("DEBUG_ARUCO", "0") == "1"
+
+
 # ── 모델 로드 (모듈 로드 시 1회) ────────────────────────────────────────
 pose_model = YOLO("yolo11n-pose.pt")
 
@@ -78,6 +100,31 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
     pose_results = pose_model.track(
         frame, conf=0.25, persist=True, verbose=False, classes=[0]
     )
+
+    # (a-1) 작업자 식별용 ArUco 감지 (worker별 고유 ID)
+    #   - 마커 중심점이 작업자 bbox 안(또는 마진 내)에 있으면 해당 worker_id 부여
+    aruco_corners, aruco_ids, _ = _aruco_detector.detectMarkers(frame)
+    worker_aruco_centers: dict[int, tuple[float, float]] = {}
+    all_detected_ids: list[int] = []
+    if aruco_ids is not None:
+        for corner, mid in zip(aruco_corners, aruco_ids.flatten()):
+            mid_int = int(mid)
+            all_detected_ids.append(mid_int)
+            if mid_int in WORKER_ARUCO_MAP:
+                pts = corner[0]
+                cx = float(pts[:, 0].mean())
+                cy = float(pts[:, 1].mean())
+                worker_aruco_centers[mid_int] = (cx, cy)
+
+    if _DEBUG_ARUCO:
+        worker_hits = sorted(worker_aruco_centers.keys())
+        print(
+            f"[aruco/{cam_id}] all={sorted(all_detected_ids)}  "
+            f"worker_ids={worker_hits}  (map={list(WORKER_ARUCO_MAP)})"
+        )
+
+    # 1) 모든 worker bbox + 발 픽셀 + 월드 좌표 수집 (worker_id 미정 상태로)
+    worker_entries: list[dict] = []
     if pose_results[0].boxes is not None:
         boxes = pose_results[0].boxes
         xyxy = boxes.xyxy.cpu().numpy()
@@ -126,8 +173,10 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
                 foot_y = y2
 
             wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
-            detections.append({
+
+            worker_entries.append({
                 "type": "worker",
+                "worker_id": None,           # 아래 매칭 패스에서 채움
                 "track_id": tid,
                 "bbox_px": [x1, y1, x2, y2],
                 "foot_px": [float(foot_x), float(foot_y)],
@@ -135,24 +184,79 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
 
+    # 2) 마커 → 가장 가까운 bbox 매칭 (greedy, 1:1)
+    #   기존 strict containment 의 실패 모드(마커가 bbox 가장자리 살짝 밖)를 해소.
+    #   거리 임계값 = max(bbox_w, bbox_h) — bbox 한 변 길이 안의 마커는 그 워커로 인정.
+    claimed_bboxes: set[int] = set()
+    # 결정적 결과를 위해 마커 ID 오름차순으로 처리
+    for mid_int in sorted(worker_aruco_centers.keys()):
+        cx, cy = worker_aruco_centers[mid_int]
+        best_idx = None
+        best_dist = float("inf")
+        for idx, entry in enumerate(worker_entries):
+            if idx in claimed_bboxes:
+                continue
+            x1, y1, x2, y2 = entry["bbox_px"]
+            bcx = (x1 + x2) / 2
+            bcy = (y1 + y2) / 2
+            max_dist = max(x2 - x1, y2 - y1)
+            dist = ((cx - bcx) ** 2 + (cy - bcy) ** 2) ** 0.5
+            if dist <= max_dist and dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+        if best_idx is not None:
+            worker_entries[best_idx]["worker_id"] = WORKER_ARUCO_MAP[mid_int]
+            claimed_bboxes.add(best_idx)
+            if _DEBUG_ARUCO:
+                print(
+                    f"[aruco/{cam_id}] marker {mid_int} → "
+                    f"bbox#{best_idx} (dist={best_dist:.0f}px)"
+                )
+        elif _DEBUG_ARUCO:
+            print(
+                f"[aruco/{cam_id}] marker {mid_int} 매칭 실패 "
+                f"(가장 가까운 bbox 가 거리 임계 초과 또는 bbox 0개)"
+            )
+
+    detections.extend(worker_entries)
+
     # (b) 커스텀 모델 감지 (forklift, box_1, box_2 등)
-    #   - 사람과 달리 발 위치 개념이 없으므로 bbox **중심점**을 기준 좌표로 사용
-    #   - box_1, box_2 는 크레인 인양물(load)
+    #   - forklift : 지면 위 객체 → bbox 밑면 중심 (homography가 정확히 지면점으로 매핑)
+    #   - box_1/box_2 : 크레인 인양물(공중) → bbox 밑면 중심 사용
+    #     · 지면이 아닌 점은 homography에서 본질적 오차가 있지만,
+    #       밑면이 bbox 중심보다 지면에 가깝기에 오차가 작음
+    #     · 두 카메라 평균(realtime_camera.py)과 시간 평활화로 추가 보정
     if custom_model is not None:
         results = custom_model(frame, conf=0.5, verbose=False)
         for box in results[0].boxes:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
             cls_id = int(box.cls[0])
             cls_name = custom_model_names.get(cls_id, f"cls_{cls_id}")
-            ref_x = (x1 + x2) / 2
-            ref_y = (y1 + y2) / 2          # bbox 중심
+
+            # 객체 타입별 기준점
+            if cls_name in ("box_1", "box_2"):
+                # 공중 인양물: 밑면 중심 (지면 projection 오차 최소화)
+                ref_x = (x1 + x2) / 2
+                ref_y = y2
+                ref_source = "bbox_bottom_center_airborne"
+            elif cls_name == "forklift":
+                # 지면 객체: 밑면 중심 (지면점)
+                ref_x = (x1 + x2) / 2
+                ref_y = y2
+                ref_source = "bbox_bottom_center"
+            else:
+                # 기타: bbox 중심 (default)
+                ref_x = (x1 + x2) / 2
+                ref_y = (y1 + y2) / 2
+                ref_source = "bbox_center"
+
             wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
             detections.append({
                 "type": cls_name,
                 "track_id": None,
                 "bbox_px": [x1, y1, x2, y2],
-                "foot_px": [ref_x, ref_y],   # 호환성 위해 필드명 유지 (실제로는 bbox 중심)
-                "ref_source": "bbox_center",
+                "foot_px": [ref_x, ref_y],
+                "ref_source": ref_source,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
 
