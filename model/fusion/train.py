@@ -1,0 +1,250 @@
+"""
+Pairwise Interaction Fusion Model 학습 스크립트.
+
+Loss:    BCE (soft labels {0.0, 0.5, 1.0}에 직접 적용)
+Optim:   Adam, lr=1e-3
+Metric:  per-pair / per-class precision, recall, F1, accuracy
+Output:  checkpoints/best.pt  (validation F1 macro 평균 기준 최고)
+
+실행:
+  python train.py
+"""
+
+from __future__ import annotations
+
+import os
+import time
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score
+
+from scenarios_synthetic import build_synthetic_24
+from dataset import FusionDataset, split_scenarios
+from model import PairwiseInteractionFusionModel
+from graph_input import THREAT_FORKLIFT, THREAT_DROPZONE
+
+
+# ── 하이퍼파라미터 ──────────────────────────────────
+EPOCHS = 120
+BATCH_SIZE = 32
+LR = 1e-3
+WEIGHT_DECAY = 1e-4
+SEED = 42
+
+# 라벨/예측 임계값 (3-class 변환용)
+THRESH_WARN = 0.4
+THRESH_DANGER = 0.7
+
+CLASS_NAMES = ["safe", "warn", "danger"]
+THREAT_NAMES = {THREAT_FORKLIFT: "forklift", THREAT_DROPZONE: "dropzone"}
+
+
+# ── helper ──────────────────────────────────────────
+def set_seed(seed: int) -> None:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def to_3way(probs: np.ndarray) -> np.ndarray:
+    """확률 → 0=safe, 1=warn, 2=danger."""
+    out = np.zeros_like(probs, dtype=np.int64)
+    out[(probs >= THRESH_WARN) & (probs < THRESH_DANGER)] = 1
+    out[probs >= THRESH_DANGER] = 2
+    return out
+
+
+# ── BCE on prob ─────────────────────────────────────
+class BCEOnProb(nn.Module):
+    """모델 출력이 이미 sigmoid 통과한 확률이므로 nn.BCELoss 사용."""
+    def __init__(self):
+        super().__init__()
+        self.loss = nn.BCELoss()
+
+    def forward(self, pred, target):
+        pred = pred.clamp(min=1e-7, max=1.0 - 1e-7)
+        return self.loss(pred, target)
+
+
+# ── 학습/평가 루프 ──────────────────────────────────
+def run_epoch(model, loader, device, optimizer=None, criterion=None):
+    is_train = optimizer is not None
+    model.train(is_train)
+
+    total_loss = 0.0
+    total_n = 0
+    all_pred = []   # list of (W, K) np
+    all_label = []  # list of (W, K) np
+
+    for nodes, adj, scene, label in loader:
+        nodes = nodes.to(device)
+        adj = adj.to(device)
+        scene = scene.to(device)
+        label = label.to(device)
+
+        with torch.set_grad_enabled(is_train):
+            pred = model(nodes, adj, scene)        # (B, N=1, K=2)
+            loss = criterion(pred, label)
+            if is_train:
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+
+        b = label.size(0)
+        total_loss += loss.item() * b
+        total_n += b
+
+        # (B, N, K) → (B*N, K)
+        all_pred.append(pred.detach().cpu().numpy().reshape(-1, pred.size(-1)))
+        all_label.append(label.detach().cpu().numpy().reshape(-1, label.size(-1)))
+
+    avg_loss = total_loss / total_n
+    pred_arr = np.concatenate(all_pred, axis=0)     # (W, K)
+    label_arr = np.concatenate(all_label, axis=0)   # (W, K)
+    return avg_loss, pred_arr, label_arr
+
+
+def compute_metrics_per_pair(pred_arr: np.ndarray, label_arr: np.ndarray) -> dict:
+    """
+    pred_arr, label_arr: (W, K)
+    Returns: {threat_name: {accuracy, per_class_precision/recall/f1, macro_f1}}
+    """
+    out = {}
+    for t_idx, t_name in THREAT_NAMES.items():
+        p_3 = to_3way(pred_arr[:, t_idx])
+        l_3 = to_3way(label_arr[:, t_idx])
+        acc = accuracy_score(l_3, p_3)
+        prec, rec, f1, support = precision_recall_fscore_support(
+            l_3, p_3, labels=[0, 1, 2], zero_division=0,
+        )
+        out[t_name] = {
+            "accuracy": acc,
+            "precision": prec.tolist(),
+            "recall": rec.tolist(),
+            "f1": f1.tolist(),
+            "support": support.tolist(),
+            "macro_f1": float(np.mean(f1)),
+        }
+    return out
+
+
+def format_metrics_compact(metrics: dict) -> str:
+    """1줄 요약: f1_safe/warn/danger (macro)."""
+    lines = []
+    for name, m in metrics.items():
+        f1 = m["f1"]
+        lines.append(
+            f"{name[0]}: f1={f1[0]:.2f}/{f1[1]:.2f}/{f1[2]:.2f} (M={m['macro_f1']:.2f})"
+        )
+    return "  ".join(lines)
+
+
+def format_metrics_detail(metrics: dict, prefix: str = "") -> None:
+    print(f"{prefix}{'pair':<10s} {'class':<8s} {'precision':>10s} {'recall':>8s} "
+          f"{'f1':>8s} {'support':>9s} {'accuracy':>10s}")
+    for name, m in metrics.items():
+        for c in range(3):
+            cls = CLASS_NAMES[c]
+            acc_str = f"{m['accuracy']:.4f}" if c == 0 else ""
+            print(f"{prefix}{name if c == 0 else '':<10s} {cls:<8s} "
+                  f"{m['precision'][c]:>10.4f} {m['recall'][c]:>8.4f} "
+                  f"{m['f1'][c]:>8.4f} {m['support'][c]:>9d} {acc_str:>10s}")
+        print(f"{prefix}{'':<10s} {'macro_f1':<8s} {'':>10s} {'':>8s} "
+              f"{m['macro_f1']:>8.4f}")
+
+
+# ── Main ────────────────────────────────────────────
+def main():
+    set_seed(SEED)
+    here = os.path.dirname(os.path.abspath(__file__))
+    ckpt_dir = os.path.join(here, "checkpoints")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_path = os.path.join(ckpt_dir, "best.pt")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}\n")
+
+    # 데이터
+    scenarios = build_synthetic_24(seed=SEED)
+    train_sc, val_sc = split_scenarios(scenarios, val_ratio=0.2, seed=SEED)
+    train_ds = FusionDataset(train_sc)
+    val_ds = FusionDataset(val_sc)
+    print(f"train scenarios: {len(train_sc)}  windows: {len(train_ds)}")
+    print(f"val   scenarios: {len(val_sc)}   windows: {len(val_ds)}")
+
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
+
+    # 모델
+    model = PairwiseInteractionFusionModel().to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"model parameters: {n_params:,}\n")
+
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY,
+    )
+    criterion = BCEOnProb()
+
+    # 학습 진행 (간단 1줄 로그)
+    best_macro_f1 = -1.0
+    print(f"{'epoch':>5} {'tr_loss':>8} {'val_loss':>9}  {'tr_metrics':<35s}  "
+          f"{'val_metrics':<35s}  time")
+    for epoch in range(1, EPOCHS + 1):
+        t0 = time.time()
+        tr_loss, tr_pred, tr_label = run_epoch(
+            model, train_loader, device, optimizer, criterion,
+        )
+        val_loss, val_pred, val_label = run_epoch(
+            model, val_loader, device, None, criterion,
+        )
+        elapsed = time.time() - t0
+
+        tr_m = compute_metrics_per_pair(tr_pred, tr_label)
+        val_m = compute_metrics_per_pair(val_pred, val_label)
+
+        # validation 평균 macro F1 = forklift macro_f1 + dropzone macro_f1 / 2
+        avg_macro = np.mean([val_m[n]["macro_f1"] for n in THREAT_NAMES.values()])
+        improved = avg_macro > best_macro_f1
+        marker = " *" if improved else ""
+
+        print(f"{epoch:5d} {tr_loss:8.4f} {val_loss:9.4f}  "
+              f"{format_metrics_compact(tr_m):<35s}  "
+              f"{format_metrics_compact(val_m):<35s}  "
+              f"{elapsed:5.2f}s{marker}")
+
+        if improved:
+            best_macro_f1 = avg_macro
+            torch.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "val_metrics": val_m,
+            }, ckpt_path)
+
+    print(f"\nbest avg macro F1 = {best_macro_f1:.4f} → {ckpt_path}\n")
+
+    # ── 최종 상세 평가 (best 체크포인트 기준) ──
+    state = torch.load(ckpt_path, map_location=device, weights_only=True)
+    model.load_state_dict(state["model_state"])
+
+    print(f"=== Final detail metrics @ best ckpt (epoch {state['epoch']}) ===\n")
+
+    # Train
+    tr_loss, tr_pred, tr_label = run_epoch(model, train_loader, device, None, criterion)
+    tr_m = compute_metrics_per_pair(tr_pred, tr_label)
+    print(f"[TRAIN]  loss={tr_loss:.4f}")
+    format_metrics_detail(tr_m, prefix="  ")
+
+    print()
+    # Val
+    val_loss, val_pred, val_label = run_epoch(model, val_loader, device, None, criterion)
+    val_m = compute_metrics_per_pair(val_pred, val_label)
+    print(f"[VAL]    loss={val_loss:.4f}")
+    format_metrics_detail(val_m, prefix="  ")
+
+
+if __name__ == "__main__":
+    main()
