@@ -4,7 +4,7 @@
   [Cam1 (RTSP)] ──► YOLO+ArUco+homography ──► world coords (worker, forklift)
   [Cam2 (RTSP)] ─┘                                   │
                                                       ▼
-  [로컬 마이크 (background thread)] ──► YAMnet ──► audio_score
+  [ESP32 마이크 → /ws/audio → 서버 YAMnet] ──► /audio/score HTTP 폴링 ──► audio_score
                                                       │
                                                       ▼
                                           RealtimeInference.push(...)
@@ -17,8 +17,8 @@
 
 실행:
   conda activate venv
-  python model/fusion/realtime_camera.py            # 라이브 카메라
-  python model/fusion/realtime_camera.py --no-audio # YAMnet 끄고 카메라만
+  python model/fusion/realtime_camera.py            # ESP32 audio + 라이브 카메라
+  python model/fusion/realtime_camera.py --no-audio # audio=0.05 고정 (오디오 무시)
 
 ESC: 종료
 """
@@ -31,7 +31,6 @@ import time
 import json
 import argparse
 import threading
-import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -58,11 +57,93 @@ load_dotenv(PROJECT_ROOT / ".env")
 from inference import (
     load_model,
     RealtimeInference,
-    risk_matrix_to_json,
-    build_alerts,
     DEFAULT_THRESHOLD,
 )
+from risk_output import FusionPrediction, ThreatType
+from publisher import publish_prediction_sync
+from db_logger import log_pair_sync, log_pair_with_snapshot_sync
 from scenario_generator import DZ_CENTER, DZ_RADIUS, RATE
+
+
+# ── MQTT 발행 cooldown / fire-and-forget ───────────────
+ALERT_COOLDOWN_SEC = 2.0
+_last_publish_ts: dict[ThreatType, float] = {}
+
+
+def _publish_in_background(
+    pred: FusionPrediction,
+    threshold: float,
+    frame_jpeg: bytes | None = None,
+) -> None:
+    """데몬 스레드에서 MQTT 발행 + DB 기록 — cv2 루프 블로킹 방지.
+
+    순서: 아두이노 신호(MQTT) 먼저, 그 다음 DB 비동기 저장.
+    frame_jpeg 있으면 스냅샷 업로드 엔드포인트 사용, 없으면 placeholder 경로.
+    """
+    # 1) MQTT 발행 (아두이노 진동)
+    try:
+        results = publish_prediction_sync(pred, threshold=threshold)
+        for r in results:
+            if r.get("status") == "success":
+                print(f"  📡 MQTT → {r['topic']}  payload='{r['message']}'  "
+                      f"prob={r.get('prob', 0):.3f}")
+            else:
+                print(f"  ⚠️  MQTT fail: {r}")
+    except Exception as e:
+        print(f"  ⚠️  publish error: {e}")
+
+    # 2) DB 저장 (incident_logs 비동기 기록)
+    try:
+        for p in pred.triggered(threshold):
+            if frame_jpeg is not None:
+                res = log_pair_with_snapshot_sync(p, frame_jpeg)
+            else:
+                res = log_pair_sync(p)
+            if res.get("status") == "ok":
+                snap = res.get("snapshot_path", "(placeholder)")
+                print(f"  💾 DB log id={res['id']}  {p.threat_type.value} "
+                      f"({p.level.value})  snapshot={snap}")
+            else:
+                print(f"  ⚠️  DB log fail: {res.get('error')}")
+    except Exception as e:
+        print(f"  ⚠️  DB log error: {e}")
+
+
+def maybe_publish(
+    pred: FusionPrediction,
+    threshold: float,
+    frame=None,
+) -> None:
+    """cooldown 체크 후 위험한 PairRisk만 백그라운드 스레드로 발행.
+
+    frame: 알림 시점의 카메라 BGR 프레임 (cv2 ndarray). None이면 placeholder 경로 사용.
+    """
+    now = time.time()
+    triggered_types = {p.threat_type for p in pred.triggered(threshold)}
+    fresh = [
+        t for t in triggered_types
+        if now - _last_publish_ts.get(t, 0.0) >= ALERT_COOLDOWN_SEC
+    ]
+    if not fresh:
+        return
+    for t in fresh:
+        _last_publish_ts[t] = now
+
+    # 메인 스레드에서 JPEG 인코딩 (cv2.imencode 는 빠름 — ~5ms)
+    frame_jpeg: bytes | None = None
+    if frame is not None:
+        try:
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ok:
+                frame_jpeg = buf.tobytes()
+        except Exception as e:
+            print(f"  ⚠️  JPEG encode error: {e}")
+
+    threading.Thread(
+        target=_publish_in_background,
+        args=(pred, threshold, frame_jpeg),
+        daemon=True,
+    ).start()
 
 
 # ── 공유 상태 (audio thread <-> main loop) ─────────────
@@ -71,85 +152,47 @@ _audio_lock = threading.Lock()
 _running = True
 
 
-# ── YAMnet 백그라운드 오디오 스레드 ────────────────────
+# ── ESP32 audio score 폴링 스레드 ──────────────────────
+# 서버(/audio/score) ← esp32_ws.py 가 ESP32 → YAMnet 결과를 보관 중.
+# realtime_camera 는 별도 subprocess 라 메모리 공유가 안 되므로 HTTP 로 가져온다.
+AUDIO_SCORE_URL = os.getenv(
+    "AUDIO_SCORE_URL",
+    f"http://127.0.0.1:{os.getenv('SERVER_PORT', '1122')}/audio/score",
+)
+AUDIO_POLL_SEC = 0.5            # 0.5s 마다 폴링 (yamnet 1.92s 윈도우 대비 충분)
+AUDIO_STALE_SEC = 5.0           # 마지막 갱신 후 이만큼 지나면 score=0
+
+
 def audio_worker(verbose: bool = False) -> None:
-    """로컬 마이크 → YAMnet → audio score 갱신 (1.92s buffer)."""
-    global _running
-    warnings.filterwarnings("ignore")
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    """서버 /audio/score 폴링 → ESP32 yamnet score 를 _audio_state 에 반영."""
+    import urllib.request
+    import urllib.error
 
-    try:
-        import sounddevice as sd
-        import tensorflow_hub as hub
-        from sklearn.metrics.pairwise import cosine_similarity
-    except ImportError as e:
-        print(f"[audio] 패키지 누락: {e}. --no-audio 옵션으로 끄세요.")
-        return
-
-    yamnet_dir = PROJECT_ROOT / "model" / "yamnet"
-    centroid_path = yamnet_dir / "anomaly_centroid.npy"
-    config_path = yamnet_dir / "anomaly_config.json"
-    if not centroid_path.exists():
-        print(f"[audio] centroid 없음: {centroid_path}")
-        return
-
-    centroid = np.load(centroid_path)
-    with open(config_path) as f:
-        cfg = json.load(f)
-
-    SAMPLE_RATE = 16000
-    BUFFER_SEC = 1.92
-    FRAME_SEC = cfg.get("frame_sec", 0.96)
-    HOP_SEC = cfg.get("hop_sec", 0.48)
-    MIN_FRAME_RMS = cfg.get("min_frame_rms", 0.01)
-    BUFFER_SIZE = int(SAMPLE_RATE * BUFFER_SEC)
-    FRAME_LEN = int(FRAME_SEC * SAMPLE_RATE)
-    HOP_LEN = int(HOP_SEC * SAMPLE_RATE)
-
-    print("[audio] YAMnet 로드 중...")
-    yamnet_model = hub.load("https://tfhub.dev/google/yamnet/1")
-    print("[audio] YAMnet 준비 완료, 마이크 시작")
-
+    print(f"[audio] ESP32 score 폴링 시작: {AUDIO_SCORE_URL}")
+    fail_count = 0
     while _running:
         try:
-            audio = sd.rec(BUFFER_SIZE, samplerate=SAMPLE_RATE,
-                           channels=1, dtype="float32")
-            sd.wait()
+            with urllib.request.urlopen(AUDIO_SCORE_URL, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            score = float(data.get("score", 0.0))
+            ts = float(data.get("ts", 0.0))
+            # 너무 오래된 값이면 무시 (ESP32 끊김)
+            if ts > 0 and (time.time() - ts) > AUDIO_STALE_SEC:
+                score = 0.0
+            with _audio_lock:
+                _audio_state["score"] = float(np.clip(score, 0.0, 1.0))
+                _audio_state["ts"] = ts
+            fail_count = 0
+            if verbose:
+                print(f"[audio] score={score:.3f} ts_age={time.time()-ts:.1f}s")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            fail_count += 1
+            if fail_count == 1 or fail_count % 20 == 0:
+                print(f"[audio] /audio/score 연결 실패 ({fail_count}회): {e}")
         except Exception as e:
-            print(f"[audio] 마이크 오류: {e}")
-            time.sleep(1.0)
-            continue
+            print(f"[audio] 폴링 오류: {e}")
 
-        wav = audio.flatten().astype(np.float32)
-        rms = float(np.sqrt(np.mean(wav ** 2)))
-        if rms < 0.003:
-            score = 0.0
-        else:
-            # peak normalize + frame split + cosine similarity
-            peak = float(np.max(np.abs(wav)))
-            if peak > 1e-6:
-                wav = wav * (0.95 / peak)
-            if len(wav) < FRAME_LEN:
-                wav = np.pad(wav, (0, FRAME_LEN - len(wav)))
-            sims = []
-            for start in range(0, len(wav) - FRAME_LEN + 1, HOP_LEN):
-                chunk = wav[start:start + FRAME_LEN]
-                if np.sqrt(np.mean(chunk ** 2)) < MIN_FRAME_RMS:
-                    continue
-                _, embeddings, _ = yamnet_model(chunk.astype(np.float32))
-                emb = embeddings.numpy()[0]
-                sim = float(cosine_similarity(
-                    emb.reshape(1, -1), centroid.reshape(1, -1)
-                )[0][0])
-                sims.append(sim)
-            score = max(sims) if sims else 0.0
-
-        with _audio_lock:
-            _audio_state["score"] = float(np.clip(score, 0.0, 1.0))
-            _audio_state["ts"] = time.time()
-
-        if verbose:
-            print(f"[audio] max_sim={score:.3f}  rms={rms:.4f}")
+        time.sleep(AUDIO_POLL_SEC)
 
 
 # ── 카메라 detection 병합 ──────────────────────────────
@@ -769,96 +812,44 @@ def main():
                     tr.update_dropzone(center=smoothed_dz)
 
             crane_active = 0  # TODO: MQTT crane state
+            rt.push(forklift_xy, push_worker, audio_score, crane_active)
 
-            # 검출된 worker마다 tracker + kinematics 생성/갱신
-            for wid, xy in workers_xy.items():
-                last_seen[wid] = now
-                if wid not in trackers:
-                    if len(trackers) >= MAX_WORKERS:
-                        continue   # 최대 추적 수 초과
-                    new_tr = RealtimeInference(model, device="cpu")
-                    if has_live_dz:
-                        new_tr.update_dropzone(
-                            center=tuple(current_dz_center.tolist())
-                        )
-                    trackers[wid] = new_tr
-                if wid not in kinematics:
-                    kinematics[wid] = WorkerKinematics()
-                kinematics[wid].update(xy)
-                trackers[wid].push(forklift_xy, xy, audio_score, crane_active)
+            risk = None
+            if rt.ready():
+                risk = rt.predict()  # (1, 2)
 
-            # 미감지 worker tracker 제거 (kinematics도 같이)
-            for wid in list(trackers.keys()):
-                if now - last_seen.get(wid, 0) > EVICTION_SEC:
-                    del trackers[wid]
-                    last_seen.pop(wid, None)
-                    kinematics.pop(wid, None)
+                # 매 프레임마다 cooldown 체크 후 MQTT 발행 + DB 저장 (백그라운드 스레드)
+                # snapshot 용 프레임: cam1 우선, 없으면 cam2
+                snapshot_frame = (
+                    f1 if (ret1 and f1 is not None)
+                    else f2 if (ret2 and f2 is not None)
+                    else None
+                )
+                pred = FusionPrediction.from_model_output(risk)
+                if pred.has_alert(args.threshold):
+                    maybe_publish(pred, args.threshold, frame=snapshot_frame)
 
-            # 각 worker별 risk 추론
-            risks_per_worker: dict[str, "_np_main.ndarray"] = {}
-            for wid, tr in trackers.items():
-                if tr.ready():
-                    risks_per_worker[wid] = tr.predict()    # (1, 2)
+                # 콘솔 로그 (200ms마다)
+                if now - last_print >= print_period:
+                    last_print = now
+                    line = (f"t={datetime.now().strftime('%H:%M:%S.%f')[:-3]}  "
+                            f"audio={audio_score:.2f}  ")
+                    if worker_xy:
+                        line += f"W=({worker_xy[0]:+.2f},{worker_xy[1]:+.2f})  "
+                    else:
+                        line += f"W=(none)              "
+                    if forklift_xy:
+                        line += f"F=({forklift_xy[0]:+.2f},{forklift_xy[1]:+.2f})  "
+                    else:
+                        line += f"F=(none)              "
+                    line += (f"forklift_risk={risk[0,0]:.3f}  "
+                            f"dropzone_risk={risk[0,1]:.3f}")
+                    print(line)
 
-            # ── 콘솔 로그 (200ms마다, 워커당 한 줄 형식) ──
-            if now - last_print >= print_period:
-                last_print = now
-                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-                f_str = (f"({forklift_xy[0]:+.2f},{forklift_xy[1]:+.2f})"
-                         if forklift_xy else "(none)")
-                dz_tag = "live" if has_live_dz else "default"
-                dz_str = (f"({float(current_dz_center[0]):+.2f},"
-                          f"{float(current_dz_center[1]):+.2f}|{dz_tag})")
-
-                if not workers_xy:
-                    # 워커 미감지: risk는 0.000 으로 표기
-                    print(
-                        f"t={ts}  audio={audio_score:.2f}  "
-                        f"W=(none)  F={f_str}  DZ={dz_str}  "
-                        f"forklift_risk=0.000  dropzone_risk=0.000"
-                    )
-                else:
-                    # 워커별 한 줄: t, audio, W{ID}, F, DZ, forklift_risk, dropzone_risk
-                    for wid in sorted(workers_xy.keys()):
-                        xy = workers_xy[wid]
-                        w_str = f"({xy[0]:+.2f},{xy[1]:+.2f})"
-                        risk = risks_per_worker.get(wid)
-                        if risk is not None:
-                            f_r = float(risk[0, 0])
-                            d_r = float(risk[0, 1])
-                            risk_str = (
-                                f"forklift_risk={f_r:.3f}  "
-                                f"dropzone_risk={d_r:.3f}"
-                            )
-                        else:
-                            risk_str = "forklift_risk=---    dropzone_risk=---    (buffering)"
-                        print(
-                            f"t={ts}  audio={audio_score:.2f}  "
-                            f"{wid}={w_str}  F={f_str}  DZ={dz_str}  {risk_str}"
-                        )
-
-                # 알림 라인 (per worker, per threat).
-                # forklift는 worker body frame 기준 방향(left/right/rear/front) 계산,
-                # dropzone은 항상 'all' (전방향 진동).
-                for wid in sorted(risks_per_worker.keys()):
-                    risk = risks_per_worker[wid]
-                    f_r = float(risk[0, 0])
-                    d_r = float(risk[0, 1])
-                    if f_r >= args.threshold:
-                        if forklift_xy is not None and wid in kinematics:
-                            direction = kinematics[wid].collision_direction(forklift_xy)
-                        else:
-                            direction = "front"
-                        print(
-                            f"  🚨 ALERT → worker/{wid}/vibration  "
-                            f"scenario=forklift  dir={direction}  prob={f_r:.3f}"
-                        )
-                    if d_r >= args.threshold:
-                        print(
-                            f"  🚨 ALERT → worker/{wid}/vibration  "
-                            f"scenario=dropzone  dir=all  prob={d_r:.3f}"
-                        )
+                    # 콘솔 알림 (시각 디버깅용 — MQTT는 위에서 이미 처리)
+                    for p in pred.triggered(args.threshold):
+                        print(f"  🚨 ALERT → {p.threat_type.value} "
+                              f"prob={p.prob:.3f} ({p.level.value})")
 
             # ── 시각화 ──
             bev_dz_xy = tuple(current_dz_center.tolist()) if has_live_dz else None

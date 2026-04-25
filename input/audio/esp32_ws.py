@@ -36,6 +36,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -54,6 +56,31 @@ BUFFER_SEC = 1.92                       # 1회 분석 윈도우 길이
 BUFFER_SAMPLES = int(SAMPLE_RATE * BUFFER_SEC)
 BUFFER_BYTES_INT16 = BUFFER_SAMPLES * 2  # int16 기준
 MIN_RMS = 0.003                          # 이보다 조용하면 Yamnet 스킵
+
+# ── 최신 score 공유 (다른 프로세스의 fusion 파이프라인이 HTTP로 읽어감) ──
+# realtime_camera.py(별도 subprocess)가 sounddevice 대신 ESP32 audio를 쓰도록
+# server.main 의 /audio/score 엔드포인트에서 이 값을 노출한다.
+_latest = {
+    "score": 0.0,         # max_sim ∈ [0, 1] (silence 시 0.0)
+    "is_anomaly": False,
+    "rms": 0.0,
+    "ts": 0.0,            # epoch sec — fresh 여부 판단용
+}
+_latest_lock = threading.Lock()
+
+
+def get_latest_score() -> dict:
+    """가장 최근 ESP32 yamnet 결과 스냅샷."""
+    with _latest_lock:
+        return dict(_latest)
+
+
+def _update_latest(score: float, is_anomaly: bool, rms: float) -> None:
+    with _latest_lock:
+        _latest["score"] = float(np.clip(score, 0.0, 1.0))
+        _latest["is_anomaly"] = bool(is_anomaly)
+        _latest["rms"] = float(rms)
+        _latest["ts"] = time.time()
 
 
 # ── 탐지기 (lazy singleton) ─────────────────────────────────────────────
@@ -149,10 +176,12 @@ async def _process_window(ws: WebSocket, pcm_bytes: bytes, detector: YamnetDetec
 
     if rms < MIN_RMS:
         print(f"[audio] silence rms={rms:.4f}", flush=True)
+        _update_latest(score=0.0, is_anomaly=False, rms=rms)
         await ws.send_json({"type": "silence", "rms": rms})
         return
 
     max_sim, is_anomaly, n_frames = await asyncio.to_thread(detector.predict, pcm)
+    _update_latest(score=max_sim, is_anomaly=is_anomaly, rms=rms)
     mark = "★ANOMALY" if is_anomaly else "  normal "
     print(f"[audio] {mark} max_sim={max_sim:.3f} rms={rms:.4f} frames={n_frames}", flush=True)
     await ws.send_json({

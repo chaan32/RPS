@@ -30,7 +30,7 @@ static const char* WIFI_SSID     = "c3c3c3";
 static const char* WIFI_PASSWORD = "castle1122eun";
 
 // 맥북 LAN IP (지금 값: 192.168.0.44). 공유기에서 고정 IP 잡아두는 걸 권장.
-static const char* WS_URL = "ws://192.168.0.4:1122/ws/audio";
+static const char* WS_URL = "ws://192.168.0.14:1122/ws/audio";
 
 // INMP441 핀 (ESP32-S3-DevKitC-1 기준 예시 — 사용 보드에 맞춰 변경)
 static constexpr int PIN_I2S_WS  = 5;   // LRCL
