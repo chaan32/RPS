@@ -472,6 +472,9 @@ def main():
     parser.add_argument("--no-frames", action="store_true",
                         help="카메라 영상 창 숨김 (BEV만 표시)")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
+    # 서버 subprocess 호환용 (world_pipeline에서 사용하는 인자, 여기선 무시)
+    parser.add_argument("--live", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-prompt", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     # ── 모델 로드 ──
@@ -534,6 +537,7 @@ def main():
     iter_period = 1.0 / RATE   # 0.2s
     print_period = 0.2
     last_print = 0.0
+    has_live_dz = False           # 인양물 검출되어 dropzone 갱신된 적 있는지
 
     try:
         while _running:
@@ -556,6 +560,7 @@ def main():
             # 인양물 검출되면 dropzone 좌표 갱신 (없으면 직전 값 유지)
             if dropzone_xy is not None:
                 rt.update_dropzone(center=dropzone_xy)
+                has_live_dz = True
 
             # buffer push (worker가 없으면 기본값으로 멀리 둠 → safe)
             push_worker = worker_xy if worker_xy else (-0.3, 5.0)
@@ -593,9 +598,10 @@ def main():
                                   f"prob={a['prob']:.3f}")
 
             # ── 시각화 ──
-            # 현재 적용 중인 dropzone (rt 내부 저장값)
-            current_dz = tuple(rt._dropzone_center.tolist())
-            current_dz_r = float(rt._dropzone_radius)
+            # live dropzone이 들어왔으면 해당 좌표를 BEV에 빨간색으로 표시,
+            # 아니면 학습 default(-1.5, 2.0)를 회색으로
+            current_dz = tuple(rt._dropzone_center.tolist()) if has_live_dz else None
+            current_dz_r = float(rt._dropzone_radius) if has_live_dz else None
             bev = render_bev(
                 worker_xy, forklift_xy, audio_score, risk,
                 dropzone_xy=current_dz, dropzone_radius=current_dz_r,

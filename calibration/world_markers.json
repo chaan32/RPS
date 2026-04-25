@@ -1,11 +1,11 @@
 {
-  "note": "책상 위 미니 테스트 — 사각 배치 (x: 100cm, y: 150cm)",
-  "origin_description": "ID 24(좌하)=원점. x축=짧은 변(→), y축=긴 변(↑)",
+  "note": "실환경 사각 배치 (가로 222cm × 세로 234cm). 월드 좌표계 1 unit = 1m.",
+  "origin_description": "ID 38 = 원점 (0, 0). x축 양수=오른쪽, y축 양수=위쪽.",
   "aruco_dictionary": "DICT_5X5_50",
   "markers": [
-    { "id": 24, "world_x": 0.0, "world_y": 0.0 },
-    { "id": 27, "world_x": 1.0, "world_y": 0.0 },
-    { "id":  0, "world_x": 0.0, "world_y": 1.5 },
-    { "id": 22, "world_x": 1.0, "world_y": 1.5 }
+    { "id": 38, "world_x":  0.00, "world_y": 0.00 },
+    { "id": 27, "world_x": -2.22, "world_y": 0.00 },
+    { "id": 24, "world_x":  0.00, "world_y": 2.34 },
+    { "id": 22, "world_x": -2.22, "world_y": 2.34 }
   ]
 }
