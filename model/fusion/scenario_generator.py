@@ -10,10 +10,20 @@
 dataset, train)은 소스에 무관하게 동일하게 동작.
 
 좌표계 (월드 좌표, 단위: m):
-  - 가로길(forklift lane) : y = 1, x ∈ [-3, +1]
-  - 세로길(worker lane)   : x = 0, y ∈ [1, 5]
-  - T-junction            : (0, 1)
-  - 드롭존                : center (-2, 3.5), radius 0.8
+  ArUco 4개로 정의된 사각 작업공간 (실측 2m × 3m):
+    27번: (-2, 0)    38번: (0, 0)      ← 하단 (forklift 라인)
+    22번: (-2, 3)    24번: (0, 3)      ← 상단
+
+  레이아웃:
+    - 작업공간   : x ∈ [-2, 0], y ∈ [0, 3]
+    - worker 라인 : 박스 안 수직, x ≈ -0.3, y가 3→0 방향 이동
+    - forklift 라인 : 박스 하단 가장자리, y = 0, x가 -2→0 (우측) 이동
+    - 드롭존     : center (-1.5, 2.0), radius 0.3
+
+  카메라:
+    - cam1 : worker 영역 (수직 라인)
+    - cam2 : forklift 영역. 인양물에 의해 worker 시야 가려짐 (사각지대)
+    - 두 카메라 모두 동일 절대 좌표계로 통일 (homography)
 
 샘플링: 5 Hz × 20초 = 100 step (기본값).
 """
@@ -33,8 +43,12 @@ DURATION = 20.0
 N_STEPS = int(RATE * DURATION)  # 100
 TIME_AXIS = np.linspace(0, DURATION, N_STEPS)
 
-DZ_CENTER = np.array([-2.0, 3.5])
-DZ_RADIUS = 0.8
+DZ_CENTER = np.array([-1.5, 2.0])
+DZ_RADIUS = 0.3
+
+# 작업공간 경계 (sanity check / 시각화용)
+WORKSPACE_X = (-2.0, 0.0)
+WORKSPACE_Y = (0.0, 3.0)
 
 
 # ── Scenario 데이터 클래스 ───────────────────────────

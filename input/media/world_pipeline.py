@@ -136,20 +136,23 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
             })
 
     # (b) 커스텀 모델 감지 (forklift, box_1, box_2 등)
+    #   - 사람과 달리 발 위치 개념이 없으므로 bbox **중심점**을 기준 좌표로 사용
+    #   - box_1, box_2 는 크레인 인양물(load)
     if custom_model is not None:
         results = custom_model(frame, conf=0.5, verbose=False)
         for box in results[0].boxes:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
             cls_id = int(box.cls[0])
             cls_name = custom_model_names.get(cls_id, f"cls_{cls_id}")
-            foot_x = (x1 + x2) / 2
-            foot_y = y2
-            wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
+            ref_x = (x1 + x2) / 2
+            ref_y = (y1 + y2) / 2          # bbox 중심
+            wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
             detections.append({
                 "type": cls_name,
                 "track_id": None,
                 "bbox_px": [x1, y1, x2, y2],
-                "foot_px": [foot_x, foot_y],
+                "foot_px": [ref_x, ref_y],   # 호환성 위해 필드명 유지 (실제로는 bbox 중심)
+                "ref_source": "bbox_center",
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
 

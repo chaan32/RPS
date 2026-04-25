@@ -48,7 +48,12 @@ V_NODES = 3
 
 # 피처 차원
 F_NODE = 8
-F_SCENE = 2
+# scene: [audio, crane_active, dist_w_to_f, dist_w_to_dz, fork_present, closing_w_to_f]
+F_SCENE = 6
+
+# 위협 타입별 scene feature 인덱스 (모델이 분리해서 사용)
+SCENE_IDX_FORKLIFT = [0, 2, 4, 5]   # audio, dist_w_f, fork_present, closing_w_f
+SCENE_IDX_DROPZONE = [0, 1, 3]       # audio, crane_active, dist_w_dz
 
 # 위협 순서 (pair label / 모델 출력에서 사용)
 THREAT_FORKLIFT = 0
@@ -86,7 +91,9 @@ def _velocity(pos: np.ndarray, dt: float) -> np.ndarray:
 def to_graph_input(
     scenario: Scenario,
     dt: float = 1.0 / RATE,
-    dist_sigma: float = 2.0,
+    dist_sigma: float = 1.0,
+    dropzone_center: np.ndarray | None = None,
+    dropzone_radius: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     단일 시나리오 → (nodes, adj, scene) 텐서.
@@ -96,6 +103,9 @@ def to_graph_input(
       dt:       time-step 간격 (초). 기본 0.2s @ 5Hz.
       dist_sigma: Adjacency Gaussian kernel의 bandwidth (m).
                   sigma 작을수록 근거리만 연결, 클수록 멀어도 연결.
+      dropzone_center: (2,) 동적 dropzone 좌표. None이면 DZ_CENTER 상수 사용.
+                       (T, 2) 형태로 시간별 다른 위치도 허용 (인양물 이동).
+      dropzone_radius: dropzone 반경. None이면 DZ_RADIUS 상수 사용.
 
     Returns:
       nodes: (V=3, T, F=8)  float32
@@ -104,11 +114,19 @@ def to_graph_input(
     """
     T = scenario.worker1.shape[0]
 
+    # 동적 dropzone 처리
+    if dropzone_center is None:
+        dropzone_center = DZ_CENTER
+    dz_arr = np.asarray(dropzone_center, dtype=np.float32)
+    if dz_arr.ndim == 1:                      # (2,) → (T, 2)
+        dz_arr = np.tile(dz_arr, (T, 1))
+    dz_radius_val = float(DZ_RADIUS if dropzone_radius is None else dropzone_radius)
+
     # ── 각 엔티티 위치 정리 ──
     w_pos, _ = _sanitize_positions(scenario.worker1)
     f_pos, _ = _sanitize_positions(scenario.forklift)
-    # 드롭존은 정적 → 모든 step 동일 좌표
-    dz_pos = np.tile(DZ_CENTER.astype(np.float32), (T, 1))
+    # 드롭존: 동적 좌표 적용
+    dz_pos = dz_arr
 
     # ── 속도 계산 ──
     w_vel = _velocity(w_pos, dt)
@@ -134,7 +152,7 @@ def to_graph_input(
     nodes[NODE_DROPZONE, :, 0:2] = dz_pos
     nodes[NODE_DROPZONE, :, 2:4] = dz_vel
     nodes[NODE_DROPZONE, :, 6] = 1.0  # is_dropzone
-    nodes[NODE_DROPZONE, :, 7] = DZ_RADIUS
+    nodes[NODE_DROPZONE, :, 7] = dz_radius_val
 
     # ── Adjacency (거리 기반 Gaussian kernel) ──
     # positions per time-step: (T, V, 2)
@@ -148,11 +166,31 @@ def to_graph_input(
     adj = adj * (1.0 - eye[None, :, :])
 
     # ── Scene context ──
+    # pair-wise 명시 feature (모델 학습 부담 줄이기 위해 directly 제공)
+    fork_present_per_step = (~np.isnan(scenario.forklift).any(axis=1)).astype(np.float32)
+    dist_w_f = np.linalg.norm(w_pos - f_pos, axis=-1).astype(np.float32)
+    dist_w_dz = np.linalg.norm(w_pos - dz_pos, axis=-1).astype(np.float32)
+
+    # 부재 시 거리는 큰 값(20.0)으로 cap (sentinel 1000 그대로면 normalize 안 됨)
+    dist_w_f = np.where(fork_present_per_step > 0, dist_w_f, 20.0)
+
+    # closing speed: worker→forklift 방향으로 닫히는 속도 (양수=접근)
+    rel = f_pos - w_pos
+    rel_norm = np.linalg.norm(rel, axis=-1, keepdims=True) + 1e-6
+    unit = rel / rel_norm
+    rel_vel = w_vel - f_vel
+    closing_w_f = (rel_vel * unit).sum(axis=-1).astype(np.float32)
+    closing_w_f = np.where(fork_present_per_step > 0, closing_w_f, 0.0)
+
     scene = np.stack(
         [scenario.audio.astype(np.float32),
-         scenario.crane_state.astype(np.float32)],
+         scenario.crane_state.astype(np.float32),
+         dist_w_f,
+         dist_w_dz,
+         fork_present_per_step,
+         closing_w_f],
         axis=1,
-    )  # (T, 2)
+    )  # (T, 6)
 
     return nodes, adj, scene
 
@@ -161,7 +199,7 @@ def to_graph_input(
 def to_graph_batch(
     scenarios: list[Scenario],
     dt: float = 1.0 / RATE,
-    dist_sigma: float = 2.0,
+    dist_sigma: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     여러 시나리오를 한 번에 변환 (전체 길이 유지, 윈도우 안 나눔).
