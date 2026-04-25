@@ -58,11 +58,93 @@ load_dotenv(PROJECT_ROOT / ".env")
 from inference import (
     load_model,
     RealtimeInference,
-    risk_matrix_to_json,
-    build_alerts,
     DEFAULT_THRESHOLD,
 )
+from risk_output import FusionPrediction, ThreatType
+from publisher import publish_prediction_sync
+from db_logger import log_pair_sync, log_pair_with_snapshot_sync
 from scenario_generator import DZ_CENTER, DZ_RADIUS, RATE
+
+
+# ── MQTT 발행 cooldown / fire-and-forget ───────────────
+ALERT_COOLDOWN_SEC = 2.0
+_last_publish_ts: dict[ThreatType, float] = {}
+
+
+def _publish_in_background(
+    pred: FusionPrediction,
+    threshold: float,
+    frame_jpeg: bytes | None = None,
+) -> None:
+    """데몬 스레드에서 MQTT 발행 + DB 기록 — cv2 루프 블로킹 방지.
+
+    순서: 아두이노 신호(MQTT) 먼저, 그 다음 DB 비동기 저장.
+    frame_jpeg 있으면 스냅샷 업로드 엔드포인트 사용, 없으면 placeholder 경로.
+    """
+    # 1) MQTT 발행 (아두이노 진동)
+    try:
+        results = publish_prediction_sync(pred, threshold=threshold)
+        for r in results:
+            if r.get("status") == "success":
+                print(f"  📡 MQTT → {r['topic']}  payload='{r['message']}'  "
+                      f"prob={r.get('prob', 0):.3f}")
+            else:
+                print(f"  ⚠️  MQTT fail: {r}")
+    except Exception as e:
+        print(f"  ⚠️  publish error: {e}")
+
+    # 2) DB 저장 (incident_logs 비동기 기록)
+    try:
+        for p in pred.triggered(threshold):
+            if frame_jpeg is not None:
+                res = log_pair_with_snapshot_sync(p, frame_jpeg)
+            else:
+                res = log_pair_sync(p)
+            if res.get("status") == "ok":
+                snap = res.get("snapshot_path", "(placeholder)")
+                print(f"  💾 DB log id={res['id']}  {p.threat_type.value} "
+                      f"({p.level.value})  snapshot={snap}")
+            else:
+                print(f"  ⚠️  DB log fail: {res.get('error')}")
+    except Exception as e:
+        print(f"  ⚠️  DB log error: {e}")
+
+
+def maybe_publish(
+    pred: FusionPrediction,
+    threshold: float,
+    frame=None,
+) -> None:
+    """cooldown 체크 후 위험한 PairRisk만 백그라운드 스레드로 발행.
+
+    frame: 알림 시점의 카메라 BGR 프레임 (cv2 ndarray). None이면 placeholder 경로 사용.
+    """
+    now = time.time()
+    triggered_types = {p.threat_type for p in pred.triggered(threshold)}
+    fresh = [
+        t for t in triggered_types
+        if now - _last_publish_ts.get(t, 0.0) >= ALERT_COOLDOWN_SEC
+    ]
+    if not fresh:
+        return
+    for t in fresh:
+        _last_publish_ts[t] = now
+
+    # 메인 스레드에서 JPEG 인코딩 (cv2.imencode 는 빠름 — ~5ms)
+    frame_jpeg: bytes | None = None
+    if frame is not None:
+        try:
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ok:
+                frame_jpeg = buf.tobytes()
+        except Exception as e:
+            print(f"  ⚠️  JPEG encode error: {e}")
+
+    threading.Thread(
+        target=_publish_in_background,
+        args=(pred, threshold, frame_jpeg),
+        daemon=True,
+    ).start()
 
 
 # ── 공유 상태 (audio thread <-> main loop) ─────────────
@@ -571,6 +653,17 @@ def main():
             if rt.ready():
                 risk = rt.predict()  # (1, 2)
 
+                # 매 프레임마다 cooldown 체크 후 MQTT 발행 + DB 저장 (백그라운드 스레드)
+                # snapshot 용 프레임: cam1 우선, 없으면 cam2
+                snapshot_frame = (
+                    f1 if (ret1 and f1 is not None)
+                    else f2 if (ret2 and f2 is not None)
+                    else None
+                )
+                pred = FusionPrediction.from_model_output(risk)
+                if pred.has_alert(args.threshold):
+                    maybe_publish(pred, args.threshold, frame=snapshot_frame)
+
                 # 콘솔 로그 (200ms마다)
                 if now - last_print >= print_period:
                     last_print = now
@@ -588,14 +681,10 @@ def main():
                             f"dropzone_risk={risk[0,1]:.3f}")
                     print(line)
 
-                    # 알림
-                    if (risk[0, 0] >= args.threshold or risk[0, 1] >= args.threshold):
-                        json_pred = risk_matrix_to_json(risk)
-                        for a in build_alerts(json_pred, threshold=args.threshold):
-                            print(f"  🚨 ALERT → {a['topic']}  "
-                                  f"scenario={a['scenario']}  "
-                                  f"dir={a['direction']}  "
-                                  f"prob={a['prob']:.3f}")
+                    # 콘솔 알림 (시각 디버깅용 — MQTT는 위에서 이미 처리)
+                    for p in pred.triggered(args.threshold):
+                        print(f"  🚨 ALERT → {p.threat_type.value} "
+                              f"prob={p.prob:.3f} ({p.level.value})")
 
             # ── 시각화 ──
             # live dropzone이 들어왔으면 해당 좌표를 BEV에 빨간색으로 표시,
