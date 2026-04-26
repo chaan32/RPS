@@ -286,14 +286,38 @@ class WorkerKinematics:
 #   - rear  → back  (위협이 뒤에 있음 = 뒤로 물러나라)
 #   - left  → left  (좌측 진동)
 #   - right → right (우측 진동)
-#   - front → all   (정면 위협은 가장 급박 → 전 모터 진동으로 즉시 정지 신호)
-# 매핑을 이 dict 한 곳에 두므로 정책 바꾸려면 여기만 손대면 된다.
-_BODY_TO_PAYLOAD = {
+#   - front → None  (작업자가 이미 시야로 인지하고 있다고 보고 알림 X)
+# None 매핑 시 resolve_direction 도 None 반환 → maybe_publish 호출이 스킵됨
+# (MQTT/DB 모두 발생 X). 정책 바꾸려면 이 dict 한 곳만 손대면 된다.
+_BODY_TO_PAYLOAD: dict[str, str | None] = {
     "rear":  "back",
     "left":  "left",
     "right": "right",
-    "front": "all",
+    "front": None,
 }
+
+# forklift 가 이 속도(m/frame) 미만이면 "정지"로 간주해 forklift trigger 를 무시한다.
+# 사람이 정지된 forklift 옆을 지나가는 건 위협이 아님.
+# 5Hz 기준 0.10 m/frame ≈ 0.5 m/s (사람 평지 걷기 1.4 m/s 의 약 1/3).
+FORKLIFT_STATIC_SPEED = 0.10
+
+# 드롭존 중심으로부터 이 반경(m) 안에 워커가 있으면 fusion 출력과 무관하게
+# danger 로 격상한다. 학습 모델은 인양 idle 시 dropzone 을 0/0.5 정도로 출력하지만,
+# 실제 운영에선 idle 이어도 접근 자체가 위험 인지 대상이라는 정책.
+DROPZONE_ALERT_RADIUS = 0.5
+
+
+def _avg_speed(history) -> float:
+    """history(deque of (x, y)) 의 평균 한 step 이동거리(m/frame).
+
+    history 가 부족하면 0.0 을 반환 → 정지로 간주(검출 직후 알림 안 울림).
+    """
+    if len(history) < 2:
+        return 0.0
+    pts = list(history)
+    dx = pts[-1][0] - pts[0][0]
+    dy = pts[-1][1] - pts[0][1]
+    return math.hypot(dx, dy) / max(1, len(pts) - 1)
 
 
 def resolve_direction(
@@ -302,20 +326,41 @@ def resolve_direction(
     kin: "WorkerKinematics",
     forklift_xy: tuple | None,
     dropzone_xy: tuple | None,
-) -> str:
+    forklift_speed: float = 0.0,
+    dz_force: bool = False,
+) -> str | None:
     """위험 발생 시점의 펌웨어 진동 방향 결정.
 
-    우선순위: forklift > dropzone (지게차 충돌이 더 즉각적인 위협).
-    - forklift trigger: 워커의 facing(heading) 기준으로 위협을 4방향에 투영.
-    - dropzone trigger: 공중 인양물 낙하 위협은 방향이 무의미 → "all".
+    Returns:
+      "back" | "left" | "right" | "all" | None
+      None 이면 알림 X (정지 forklift 만 trigger / 정면 충돌 / 위협 없음).
+
+    정책:
+      1) forklift trigger 라도 forklift 가 정지(< FORKLIFT_STATIC_SPEED)면 무시.
+      2) forklift 가 움직이는 경우 워커 facing 기준 4방향 매핑.
+         - front 는 None (작업자 시야 → 알림 불필요)
+      3) dropzone trigger 또는 dz_force(거리 기반 강제 격상) 가 있으면 "all".
     """
     triggered_types = {p.threat_type for p in pred.triggered(threshold)}
-    if ThreatType.FORKLIFT in triggered_types and forklift_xy is not None:
+
+    fork_active = (
+        ThreatType.FORKLIFT in triggered_types
+        and forklift_xy is not None
+        and forklift_speed >= FORKLIFT_STATIC_SPEED
+    )
+    dz_active = ThreatType.DROPZONE in triggered_types or dz_force
+
+    if fork_active:
         body_dir = kin.collision_direction(forklift_xy)
-        return _BODY_TO_PAYLOAD.get(body_dir, "all")
-    if ThreatType.DROPZONE in triggered_types:
+        payload = _BODY_TO_PAYLOAD.get(body_dir)
+        if payload is not None:
+            return payload
+        # front 는 차단 → dz_active 가 있으면 거기로 fall through, 아니면 None.
+
+    if dz_active:
         return "all"
-    return "all"
+
+    return None
 
 
 # cam2 가 ArUco 를 못 본 워커를 cam1 의 식별된 워커와 묶는 거리 임계값(m).
@@ -880,6 +925,10 @@ def main():
     from collections import deque
     dz_history = deque(maxlen=DZ_SMOOTHING_FRAMES)
 
+    # forklift 위치 history (정지 여부 판정용, 5Hz 기준 약 2초 분량)
+    forklift_history: deque = deque(maxlen=10)
+    forklift_last_seen = 0.0
+
     # 현재 적용 중인 dropzone (live 모드 아니면 default)
     import numpy as _np_main
     current_dz_center = _np_main.array(DZ_CENTER, dtype=_np_main.float32)
@@ -899,6 +948,16 @@ def main():
             d2 = extract_detections_with_world(f2, "cam2") if ret2 and f2 is not None else []
 
             workers_xy, forklift_xy, dropzone_xy = pick_positions(d1, d2)
+
+            # forklift 정지 여부 판정용 history 갱신.
+            # forklift 가 1초 이상 안 보이면 history 비움 (옛 위치 + 새 위치
+            # 사이의 가짜 이동거리로 잘못된 속도가 잡히는 걸 방지).
+            if forklift_xy is not None:
+                forklift_history.append(forklift_xy)
+                forklift_last_seen = now
+            elif forklift_history and (now - forklift_last_seen) > 1.0:
+                forklift_history.clear()
+            forklift_speed = _avg_speed(forklift_history)
 
             with _audio_lock:
                 audio_score = _audio_state["score"]
@@ -956,21 +1015,47 @@ def main():
             )
 
             # 위험한 워커가 1명이라도 있으면 MQTT/ DB 발행 (cooldown 은 maybe_publish 가 처리)
-            # direction 은 워커 body frame 기준으로 위협 방향을 4방향에 투영해
-            # 펌웨어 명령(back/left/right/all)으로 매핑한 값.
-            bev_dz_xy_for_dir = (
-                tuple(current_dz_center.tolist()) if has_live_dz else None
-            )
+            # direction 은 워커 body frame 기준 위협 방향을 4방향에 투영해
+            # 펌웨어 명령(back/left/right/all/None)으로 매핑한 값.
+            #
+            # 정책 보강:
+            #   1) dropzone 은 fusion 출력과 무관하게 워커가 DROPZONE_ALERT_RADIUS
+            #      안에 들면 dropzone risk 를 1.0 으로 강제 격상 (idle 인양물도 위험).
+            #   2) forklift 가 정지 상태면 forklift trigger 를 무시 (resolve_direction).
+            #   3) 위협 방향이 정면(front)이면 알림 X (resolve_direction → None).
+            dz_xy_for_alert = tuple(current_dz_center.tolist())   # live 또는 default
             for wid, risk in risks_per_worker.items():
+                wxy = workers_xy.get(wid)
+                dz_force = False
+                if wxy is not None:
+                    d_wd = math.hypot(
+                        wxy[0] - dz_xy_for_alert[0],
+                        wxy[1] - dz_xy_for_alert[1],
+                    )
+                    if d_wd <= DROPZONE_ALERT_RADIUS:
+                        # fusion 모델이 dropzone 을 0.0 으로 내도 강제로 1.0 격상.
+                        # risk 는 ndarray 라 .copy() 로 원본 보호.
+                        dz_force = True
+                        risk = risk.copy()
+                        risk[0, 1] = max(float(risk[0, 1]), 1.0)
+
                 pred = FusionPrediction.from_model_output(risk)
-                if pred.has_alert(args.threshold):
-                    direction = resolve_direction(
-                        pred, args.threshold, kinematics[wid],
-                        forklift_xy, bev_dz_xy_for_dir,
-                    )
-                    maybe_publish(
-                        pred, args.threshold, direction, frame=snapshot_frame,
-                    )
+                if not pred.has_alert(args.threshold):
+                    continue
+
+                direction = resolve_direction(
+                    pred, args.threshold, kinematics[wid],
+                    forklift_xy, dz_xy_for_alert,
+                    forklift_speed=forklift_speed,
+                    dz_force=dz_force,
+                )
+                if direction is None:
+                    # 정지 forklift 거나 정면 충돌 등 — 알림 안 울림.
+                    continue
+
+                maybe_publish(
+                    pred, args.threshold, direction, frame=snapshot_frame,
+                )
 
             # 콘솔 로그 (200ms마다)
             if risks_per_worker and now - last_print >= print_period:
