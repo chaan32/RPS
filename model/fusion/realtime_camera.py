@@ -55,7 +55,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 # Fusion 모듈
 from inference import (
-    load_model,
+    load_dual_model,
     RealtimeInference,
     DEFAULT_THRESHOLD,
 )
@@ -852,13 +852,13 @@ def main():
     parser.add_argument("--no-prompt", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    # ── 모델 로드 ──
-    ckpt = _HERE.parent / "checkpoints" / "best.pt"
-    if not ckpt.exists():
-        print(f"체크포인트 없음: {ckpt}")
+    # ── 모델 로드 (페어별 best dual) ──
+    ckpt_dir = _HERE.parent / "checkpoints"
+    if not ckpt_dir.exists():
+        print(f"체크포인트 디렉터리 없음: {ckpt_dir}")
         sys.exit(1)
-    model = load_model(str(ckpt), device="cpu")
-    print(f"[fusion] 모델 로드: {ckpt.name}")
+    model = load_dual_model(str(ckpt_dir), device="cpu")
+    print(f"[fusion] dual 모델 로드 완료")
 
     # worker별 독립 RealtimeInference 인스턴스 관리.
     # 같은 모델 객체를 공유하므로 메모리 부담 없음.

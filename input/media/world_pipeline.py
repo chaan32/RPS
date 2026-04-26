@@ -67,6 +67,26 @@ _aruco_detector = cv2.aruco.ArucoDetector(_aruco_dict, _aruco_params)
 _DEBUG_ARUCO = os.getenv("DEBUG_ARUCO", "0") == "1"
 
 
+# ── Worker ID persistence (시간축 + 카메라축) ─────────────────────────
+# 한 번 ArUco로 식별된 작업자를 마커가 사라져도, 다른 카메라에서도 같은 ID로 유지.
+#
+# (1) 시간축: YOLO track_id에 worker_id를 영구 결합 → 같은 카메라에서
+#     ArUco 마커가 가려져도 YOLO tracker가 동일 track_id를 유지하는 한 라벨 유지.
+# (2) 카메라축: worker_id별 마지막 world 좌표를 모두 모아두었다가, 다른 카메라에서
+#     worker_id 미부여 person이 같은 좌표 근처에 있으면 동일 ID로 전파.
+#
+# {cam_id: {track_id: worker_id}}
+_cam_track_to_worker: dict[str, dict[int, str]] = {"cam1": {}, "cam2": {}}
+# {worker_id: {"world": (x, y), "ts": float, "by_cam": str}}
+_worker_world_state: dict[str, dict] = {}
+
+# Cross-camera 전파 시 같은 사람으로 인정할 world 좌표 반경 (m).
+# Homography 오차 + 좌우 카메라 시점차로 동일인이라도 0.3~0.8m 차이 흔함.
+WORLD_MATCH_RADIUS_M = 1.0
+# 이 시간(초)을 넘긴 worker_id는 cross-camera 매칭 후보에서 제외.
+WORKER_STATE_TTL_S = 5.0
+
+
 # ── 모델 로드 (모듈 로드 시 1회) ────────────────────────────────────────
 pose_model = YOLO("yolo11n-pose.pt")
 
@@ -178,11 +198,21 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
                 "type": "worker",
                 "worker_id": None,           # 아래 매칭 패스에서 채움
                 "track_id": tid,
+                "id_source": None,
                 "bbox_px": [x1, y1, x2, y2],
                 "foot_px": [float(foot_x), float(foot_y)],
                 "foot_source": foot_source,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
+
+    # 1.5) 시간축 persistence: track_id에 이전 worker_id가 결합돼 있으면 먼저 채움.
+    #      ArUco 매칭은 그 위에서 덮어쓰는 형태가 되어, 마커가 다시 보이면 정정 가능.
+    cam_track_map = _cam_track_to_worker.setdefault(cam_id, {})
+    for entry in worker_entries:
+        tid = entry["track_id"]
+        if tid is not None and tid in cam_track_map:
+            entry["worker_id"] = cam_track_map[tid]
+            entry["id_source"] = "track_persistence"
 
     # 2) 마커 → 가장 가까운 bbox 매칭 (greedy, 1:1)
     #   기존 strict containment 의 실패 모드(마커가 bbox 가장자리 살짝 밖)를 해소.
@@ -205,8 +235,14 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
                 best_dist = dist
                 best_idx = idx
         if best_idx is not None:
-            worker_entries[best_idx]["worker_id"] = WORKER_ARUCO_MAP[mid_int]
+            wid = WORKER_ARUCO_MAP[mid_int]
+            worker_entries[best_idx]["worker_id"] = wid
+            worker_entries[best_idx]["id_source"] = "aruco"
             claimed_bboxes.add(best_idx)
+            # 시간축 persistence를 위해 track_id ↔ worker_id 영구 결합
+            tid = worker_entries[best_idx]["track_id"]
+            if tid is not None:
+                cam_track_map[tid] = wid
             if _DEBUG_ARUCO:
                 print(
                     f"[aruco/{cam_id}] marker {mid_int} → "
@@ -263,6 +299,82 @@ def extract_detections_with_world(frame, cam_id: str) -> list[dict]:
     return detections
 
 
+def cross_camera_propagate(
+    detections_by_cam: dict[str, list[dict]],
+    now_ts: float | None = None,
+) -> None:
+    """두 카메라 검출 결과 사이에서 worker_id를 교차 전파.
+
+    한쪽 카메라가 ArUco/시간축으로 식별한 worker의 world 좌표 근처에 있는
+    다른 카메라의 미식별 person bbox에 동일 worker_id를 부여한다.
+
+    동작:
+      1) 모든 카메라 결과를 훑어 worker_id가 있는 entry는 _worker_world_state 갱신.
+      2) TTL 초과한 worker_id 정리.
+      3) worker_id 없는 entry는 _worker_world_state에서 가장 가까운 worker(반경 내,
+         같은 프레임에서 미사용)를 찾아 ID 부여 + 해당 카메라 cam_track_map에도 결합.
+
+    in-place로 entry["worker_id"]/["id_source"] 채워 넣음.
+    """
+    if now_ts is None:
+        now_ts = time.time()
+
+    # 1) 식별된 worker로 state 갱신
+    for cam_id, dets in detections_by_cam.items():
+        for entry in dets:
+            if entry.get("type") != "worker":
+                continue
+            wid = entry.get("worker_id")
+            if wid is None:
+                continue
+            wx, wy = entry["world"]["x"], entry["world"]["y"]
+            _worker_world_state[wid] = {
+                "world": (wx, wy),
+                "ts": now_ts,
+                "by_cam": cam_id,
+            }
+
+    # 2) 만료 정리
+    for wid in [w for w, st in _worker_world_state.items()
+                if now_ts - st["ts"] > WORKER_STATE_TTL_S]:
+        _worker_world_state.pop(wid, None)
+
+    # 3) 미식별 entry에 전파
+    for cam_id, dets in detections_by_cam.items():
+        cam_track_map = _cam_track_to_worker.setdefault(cam_id, {})
+        # 같은 프레임 같은 카메라에서 이미 사용된 worker_id는 매칭 후보 제외
+        used_in_cam = {
+            e["worker_id"] for e in dets
+            if e.get("type") == "worker" and e.get("worker_id") is not None
+        }
+        for entry in dets:
+            if entry.get("type") != "worker" or entry.get("worker_id") is not None:
+                continue
+            wx, wy = entry["world"]["x"], entry["world"]["y"]
+            best_wid, best_dist = None, float("inf")
+            for wid, st in _worker_world_state.items():
+                if wid in used_in_cam:
+                    continue
+                sx, sy = st["world"]
+                dist = ((wx - sx) ** 2 + (wy - sy) ** 2) ** 0.5
+                if dist < best_dist and dist <= WORLD_MATCH_RADIUS_M:
+                    best_dist = dist
+                    best_wid = wid
+            if best_wid is not None:
+                entry["worker_id"] = best_wid
+                entry["id_source"] = "cross_camera"
+                used_in_cam.add(best_wid)
+                tid = entry.get("track_id")
+                if tid is not None:
+                    # 다음 프레임부터 시간축 persistence 작동
+                    cam_track_map[tid] = best_wid
+                if _DEBUG_ARUCO:
+                    print(
+                        f"[cross/{cam_id}] {best_wid} 전파 "
+                        f"(dist={best_dist:.2f}m)"
+                    )
+
+
 def draw_annotated(frame, detections: list[dict]):
     """bbox + 발 점 + 월드 좌표 라벨 오버레이."""
     out = frame.copy()
@@ -280,7 +392,14 @@ def draw_annotated(frame, detections: list[dict]):
         cv2.circle(out, (fx, fy), 10, (0, 0, 255), -1)
         cv2.circle(out, (fx, fy), 14, (255, 255, 255), 2)
         wx, wy = d["world"]["x"], d["world"]["y"]
-        label = f'{d["type"]} ({wx:.2f}, {wy:.2f})m'
+        if d.get("type") == "worker":
+            wid = d.get("worker_id") or "??"
+            src = d.get("id_source")
+            src_tag = {"aruco": "*A", "track_persistence": "*T",
+                       "cross_camera": "*X"}.get(src, "")
+            label = f'{wid}{src_tag} ({wx:.2f}, {wy:.2f})m'
+        else:
+            label = f'{d["type"]} ({wx:.2f}, {wy:.2f})m'
         cv2.putText(out, label, (x1, max(25, y1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
         cv2.putText(out, label, (x1, max(25, y1 - 10)),
@@ -451,6 +570,9 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
 
             d1 = extract_detections_with_world(f1, "cam1") if ret1 and f1 is not None else []
             d2 = extract_detections_with_world(f2, "cam2") if ret2 and f2 is not None else []
+
+            # 두 카메라 결과 사이 worker_id 교차 전파 (마커 안 보이는 카메라까지 ID 통일)
+            cross_camera_propagate({"cam1": d1, "cam2": d2})
 
             payload = {
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
