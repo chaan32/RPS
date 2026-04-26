@@ -175,8 +175,8 @@ async def _process_window(ws: WebSocket, pcm_bytes: bytes, detector: YamnetDetec
     rms = float(np.sqrt(np.mean(pcm ** 2)))
 
     if rms < MIN_RMS:
-        print(f"[audio] silence rms={rms:.4f}", flush=True)
         _update_latest(score=0.0, is_anomaly=False, rms=rms)
+        print(f"[audio] silence rms={rms:.4f}", flush=True)
         await ws.send_json({"type": "silence", "rms": rms})
         return
 
