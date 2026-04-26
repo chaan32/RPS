@@ -34,6 +34,9 @@ LR = 1e-3
 WEIGHT_DECAY = 1e-4
 SEED = 42
 
+# Early stopping: avg macro F1이 PATIENCE epoch 동안 개선 없으면 중단
+EARLY_STOP_PATIENCE = 15
+
 # 라벨/예측 임계값 (3-class 변환용)
 THRESH_WARN = 0.4
 THRESH_DANGER = 0.7
@@ -163,7 +166,13 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ckpt_dir = os.path.join(here, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, "best.pt")
+
+    # 페어별 best 체크포인트 + 평균 best (backward compat)
+    pair_names = list(THREAT_NAMES.values())  # ["forklift", "dropzone"]
+    ckpt_paths = {
+        name: os.path.join(ckpt_dir, f"best_{name}.pt") for name in pair_names
+    }
+    ckpt_paths["avg"] = os.path.join(ckpt_dir, "best.pt")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}\n")
@@ -189,10 +198,14 @@ def main():
     )
     criterion = BCEOnProb()
 
-    # 학습 진행 (간단 1줄 로그)
-    best_macro_f1 = -1.0
+    # 페어별 best/patience 추적
+    best_f1   = {name: -1.0 for name in pair_names}
+    best_epoch = {name: 0   for name in pair_names}
+    patience  = {name: 0   for name in pair_names}
+    best_avg_f1, best_avg_epoch = -1.0, 0
+
     print(f"{'epoch':>5} {'tr_loss':>8} {'val_loss':>9}  {'tr_metrics':<35s}  "
-          f"{'val_metrics':<35s}  time")
+          f"{'val_metrics':<35s}  time  saved")
     for epoch in range(1, EPOCHS + 1):
         t0 = time.time()
         tr_loss, tr_pred, tr_label = run_epoch(
@@ -206,44 +219,74 @@ def main():
         tr_m = compute_metrics_per_pair(tr_pred, tr_label)
         val_m = compute_metrics_per_pair(val_pred, val_label)
 
-        # validation 평균 macro F1 = forklift macro_f1 + dropzone macro_f1 / 2
-        avg_macro = np.mean([val_m[n]["macro_f1"] for n in THREAT_NAMES.values()])
-        improved = avg_macro > best_macro_f1
-        marker = " *" if improved else ""
+        # 페어별 best 갱신
+        saved_tags = []
+        for name in pair_names:
+            f1 = val_m[name]["macro_f1"]
+            if f1 > best_f1[name]:
+                best_f1[name] = f1
+                best_epoch[name] = epoch
+                patience[name] = 0
+                torch.save({
+                    "epoch": epoch,
+                    "pair": name,
+                    "model_state": model.state_dict(),
+                    "val_metrics": val_m,
+                }, ckpt_paths[name])
+                saved_tags.append(f"*{name[0]}")
+            else:
+                patience[name] += 1
 
+        # 평균 best (backward compat: best.pt)
+        avg_f1 = float(np.mean([val_m[n]["macro_f1"] for n in pair_names]))
+        if avg_f1 > best_avg_f1:
+            best_avg_f1 = avg_f1
+            best_avg_epoch = epoch
+            torch.save({
+                "epoch": epoch,
+                "pair": "avg",
+                "model_state": model.state_dict(),
+                "val_metrics": val_m,
+            }, ckpt_paths["avg"])
+            saved_tags.append("*avg")
+
+        marker = " " + "".join(saved_tags) if saved_tags else ""
         print(f"{epoch:5d} {tr_loss:8.4f} {val_loss:9.4f}  "
               f"{format_metrics_compact(tr_m):<35s}  "
               f"{format_metrics_compact(val_m):<35s}  "
               f"{elapsed:5.2f}s{marker}")
 
-        if improved:
-            best_macro_f1 = avg_macro
-            torch.save({
-                "epoch": epoch,
-                "model_state": model.state_dict(),
-                "val_metrics": val_m,
-            }, ckpt_path)
+        # Early stopping: 모든 페어가 patience 초과로 정체
+        if all(patience[name] >= EARLY_STOP_PATIENCE for name in pair_names):
+            print(f"\n[EarlyStopping] 모든 페어가 {EARLY_STOP_PATIENCE} epoch 정체 "
+                  f"→ epoch {epoch}에서 중단")
+            break
 
-    print(f"\nbest avg macro F1 = {best_macro_f1:.4f} → {ckpt_path}\n")
-
-    # ── 최종 상세 평가 (best 체크포인트 기준) ──
-    state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model.load_state_dict(state["model_state"])
-
-    print(f"=== Final detail metrics @ best ckpt (epoch {state['epoch']}) ===\n")
-
-    # Train
-    tr_loss, tr_pred, tr_label = run_epoch(model, train_loader, device, None, criterion)
-    tr_m = compute_metrics_per_pair(tr_pred, tr_label)
-    print(f"[TRAIN]  loss={tr_loss:.4f}")
-    format_metrics_detail(tr_m, prefix="  ")
-
+    # ── 학습 종료 요약 ──
     print()
-    # Val
-    val_loss, val_pred, val_label = run_epoch(model, val_loader, device, None, criterion)
-    val_m = compute_metrics_per_pair(val_pred, val_label)
-    print(f"[VAL]    loss={val_loss:.4f}")
-    format_metrics_detail(val_m, prefix="  ")
+    print(f"best per-pair F1:")
+    for name in pair_names:
+        print(f"  {name:<10s} F1={best_f1[name]:.4f} @ ep{best_epoch[name]}  "
+              f"→ {ckpt_paths[name]}")
+    print(f"  {'avg':<10s} F1={best_avg_f1:.4f} @ ep{best_avg_epoch}  "
+          f"→ {ckpt_paths['avg']}")
+    print()
+
+    # ── 최종 상세 평가: 페어별 best ckpt 각각 로드 ──
+    print(f"=== Final detail metrics @ per-pair best ckpts ===\n")
+    for name in pair_names:
+        state = torch.load(ckpt_paths[name], map_location=device, weights_only=True)
+        model.load_state_dict(state["model_state"])
+        val_loss, val_pred, val_label = run_epoch(
+            model, val_loader, device, None, criterion,
+        )
+        val_m = compute_metrics_per_pair(val_pred, val_label)
+        print(f"[{name.upper()} best ckpt]  epoch={state['epoch']}  val_loss={val_loss:.4f}")
+        # 자기 페어 metric만 강조 (다른 페어는 참고용)
+        format_metrics_detail({name: val_m[name]}, prefix="  ")
+        other = [n for n in pair_names if n != name][0]
+        print(f"  (참고: {other} F1={val_m[other]['macro_f1']:.4f})")
+        print()
 
 
 if __name__ == "__main__":

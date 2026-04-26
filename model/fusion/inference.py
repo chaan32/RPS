@@ -27,6 +27,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from scenario_generator import Scenario, RATE, DZ_CENTER, DZ_RADIUS, N_STEPS
 import numpy as _np  # noqa
@@ -60,6 +61,70 @@ def load_model(
     model.eval()
     model.to(device)
     return model
+
+
+# ── 페어별 dual 모델 ───────────────────────────────
+class DualPairModel(nn.Module):
+    """
+    forklift / dropzone 각자 best 체크포인트를 들고 있다가, 추론 시
+    각 페어의 출력 값만 자기 모델에서 가져와 합친다.
+
+    출력 shape는 단일 모델과 동일: (B, N, K=2)
+      - K=THREAT_FORKLIFT 채널 ← model_forklift
+      - K=THREAT_DROPZONE 채널 ← model_dropzone
+    """
+    def __init__(
+        self,
+        model_forklift: PairwiseInteractionFusionModel,
+        model_dropzone: PairwiseInteractionFusionModel,
+    ):
+        super().__init__()
+        self.m_forklift = model_forklift
+        self.m_dropzone = model_dropzone
+
+    def forward(self, n, a, s):
+        r_f = self.m_forklift(n, a, s)   # (B, N, 2)
+        r_d = self.m_dropzone(n, a, s)   # (B, N, 2)
+        # forklift 채널은 m_forklift, dropzone 채널은 m_dropzone
+        out = r_f.clone()
+        out[..., THREAT_DROPZONE] = r_d[..., THREAT_DROPZONE]
+        return out
+
+
+def load_dual_model(
+    ckpt_dir: str,
+    device: str = "cpu",
+    forklift_ckpt: str = "best_forklift.pt",
+    dropzone_ckpt: str = "best_dropzone.pt",
+) -> DualPairModel:
+    """
+    페어별 best 체크포인트 두 개를 로드해 DualPairModel 반환.
+
+    누락 시 단일 best.pt로 폴백.
+    """
+    ckpt_f = os.path.join(ckpt_dir, forklift_ckpt)
+    ckpt_d = os.path.join(ckpt_dir, dropzone_ckpt)
+    fallback = os.path.join(ckpt_dir, "best.pt")
+
+    if not os.path.exists(ckpt_f) or not os.path.exists(ckpt_d):
+        if not os.path.exists(fallback):
+            raise FileNotFoundError(
+                f"per-pair ckpts not found and no fallback best.pt at {ckpt_dir}"
+            )
+        print(f"[DualPairModel] per-pair ckpts 미존재 → best.pt 폴백 사용")
+        m = load_model(fallback, device=device)
+        return DualPairModel(m, m).eval().to(device)
+
+    m_f = load_model(ckpt_f, device=device)
+    m_d = load_model(ckpt_d, device=device)
+    dual = DualPairModel(m_f, m_d).eval().to(device)
+
+    # 정보 출력
+    sf = torch.load(ckpt_f, map_location="cpu", weights_only=True)
+    sd = torch.load(ckpt_d, map_location="cpu", weights_only=True)
+    print(f"[DualPairModel] forklift ← {forklift_ckpt} (epoch {sf.get('epoch')})")
+    print(f"[DualPairModel] dropzone ← {dropzone_ckpt} (epoch {sd.get('epoch')})")
+    return dual
 
 
 # ── Scenario 단위 추론 (오프라인) ──────────────────
@@ -263,13 +328,14 @@ class RealtimeInference:
 # ── Sanity check ───────────────────────────────────
 def _sanity_check():
     here = os.path.dirname(os.path.abspath(__file__))
-    ckpt = os.path.join(here, "checkpoints", "best.pt")
-    if not os.path.exists(ckpt):
-        print(f"checkpoint not found: {ckpt}")
+    ckpt_dir = os.path.join(here, "checkpoints")
+    if not os.path.exists(ckpt_dir):
+        print(f"checkpoint dir not found: {ckpt_dir}")
         print("→ run train.py first")
         return
 
-    model = load_model(ckpt, device="cpu")
+    # 페어별 best 체크포인트로 dual 모델 로드 (없으면 best.pt 폴백)
+    model = load_dual_model(ckpt_dir, device="cpu")
 
     # 1) Scenario 전체 타임라인 추론
     from scenarios_synthetic import build_synthetic_24
