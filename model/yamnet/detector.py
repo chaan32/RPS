@@ -10,6 +10,13 @@ realtime_detect.py / test_with_wav.py / WebSocket 서버가 공통으로 쓸 수
 import json
 import os
 
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # ERROR만 (cpu_feature_guard 등 억제)
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+
+import logging
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+logging.getLogger("absl").setLevel(logging.ERROR)
+
 import numpy as np
 import tensorflow_hub as hub
 from sklearn.metrics.pairwise import cosine_similarity

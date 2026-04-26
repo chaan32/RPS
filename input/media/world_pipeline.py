@@ -337,7 +337,7 @@ def _capture_rtsp_snapshot(cam_id: str, rtsp_url: str, interactive: bool = True)
     return snap
 
 
-def ensure_calibration(cam_id: str, rtsp_url: str | None = None) -> None:
+def ensure_calibration(cam_id: str, rtsp_url: str | None = None, interactive: bool = True) -> None:
     """캘리브레이션 JSON이 없으면 스냅샷 확보 → calibrate_homography.py 실행."""
     H_path = CALIBRATION_DIR / f"{cam_id}_homography.json"
     if H_path.exists():
@@ -352,7 +352,7 @@ def ensure_calibration(cam_id: str, rtsp_url: str | None = None) -> None:
                 f"  · --live 모드로 RTSP에서 자동 캡처\n"
                 f"  · calibration/ 에 직접 이미지 저장 후 재실행"
             )
-        _capture_rtsp_snapshot(cam_id, rtsp_url)
+        _capture_rtsp_snapshot(cam_id, rtsp_url, interactive=interactive)
 
     print(f"[{cam_id}] 캘리브레이션 실행...")
     run_calibration(cam_id, snap)

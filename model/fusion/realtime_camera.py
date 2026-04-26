@@ -60,7 +60,7 @@ from inference import (
     DEFAULT_THRESHOLD,
 )
 from risk_output import FusionPrediction, ThreatType
-from publisher import publish_prediction_sync
+from publisher import publish_alert_via_server_sync
 from db_logger import log_pair_sync, log_pair_with_snapshot_sync
 from scenario_generator import DZ_CENTER, DZ_RADIUS, RATE
 
@@ -80,17 +80,17 @@ def _publish_in_background(
     순서: 아두이노 신호(MQTT) 먼저, 그 다음 DB 비동기 저장.
     frame_jpeg 있으면 스냅샷 업로드 엔드포인트 사용, 없으면 placeholder 경로.
     """
-    # 1) MQTT 발행 (아두이노 진동)
+    # 1) /send-alert HTTP 호출 (server 가 MQTT 로 forklift/4/vibration 발행)
     try:
-        results = publish_prediction_sync(pred, threshold=threshold)
+        results = publish_alert_via_server_sync(pred, threshold=threshold)
         for r in results:
             if r.get("status") == "success":
-                print(f"  📡 MQTT → {r['topic']}  payload='{r['message']}'  "
-                      f"prob={r.get('prob', 0):.3f}")
+                print(f"  📡 /send-alert → topic='{r.get('topic')}' "
+                      f"payload='{r.get('message')}'")
             else:
-                print(f"  ⚠️  MQTT fail: {r}")
+                print(f"  ⚠️  /send-alert fail: {r}")
     except Exception as e:
-        print(f"  ⚠️  publish error: {e}")
+        print(f"  ⚠️  alert error: {e}")
 
     # 2) DB 저장 (incident_logs 비동기 기록)
     try:
@@ -258,6 +258,11 @@ class WorkerKinematics:
         return "rear"
 
 
+# cam2 가 ArUco 를 못 본 워커를 cam1 의 식별된 워커와 묶는 거리 임계값(m).
+# 같은 사람이라면 두 카메라의 월드 좌표는 homography 오차 범위 내(보통 < 1m).
+CROSS_CAM_MATCH_RADIUS = 1.5
+
+
 def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
     """cam1 + cam2 detection list → (workers_xy, forklift_xy, dropzone_xy).
 
@@ -266,34 +271,74 @@ def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
       forklift_xy: tuple or None
       dropzone_xy: tuple or None  (box_1/box_2 = 인양물 평균 좌표)
 
-    - worker  : ArUco worker_id 단위로 카메라 간 평균 (식별 못 된 worker는 제외)
-    - forklift: 모든 카메라 평균
-    - dropzone: box_1, box_2 (인양물) 평균. 없으면 None (이전 값 유지).
+    워커 매칭 정책:
+      1) 각 카메라가 ArUco 로 직접 식별한 워커는 worker_id 그대로 사용.
+      2) 한쪽 카메라(예: cam2)가 ArUco 를 놓쳐서 worker_id=None 인 워커가 있으면,
+         다른 카메라가 식별한 같은 worker_id 위치(월드 좌표) 근처(<1.5m)에 있을 때
+         그 worker_id 로 흡수 → 양쪽 카메라 위치 평균으로 안정화.
+      3) 마지막까지 식별 안 된 워커는 fusion 입력에서 제외 (track_id 없이는 위험 평가
+         단위가 흔들리기 때문).
     """
-    workers_by_id: dict[str, list] = {}
-    forklifts, boxes = [], []
-    for d in d1 + d2:
-        t = d["type"]
-        if t == "worker":
-            wid = d.get("worker_id")
-            if wid is None:
-                # ArUco 식별 안 된 작업자는 무시 (W01/W02/W03 단위로 다루기 위해)
+    # 1) cam 별로 식별/미식별 분리
+    def _split(dets):
+        ided, unided = [], []
+        for d in dets:
+            if d.get("type") != "worker":
                 continue
-            workers_by_id.setdefault(wid, []).append(
-                (d["world"]["x"], d["world"]["y"])
-            )
-        elif t == "forklift":
-            forklifts.append((d["world"]["x"], d["world"]["y"]))
-        elif t in BOX_CLASS_NAMES:
-            boxes.append((d["world"]["x"], d["world"]["y"]))
+            xy = (d["world"]["x"], d["world"]["y"])
+            if d.get("worker_id"):
+                ided.append((d["worker_id"], xy))
+            else:
+                unided.append(xy)
+        return ided, unided
 
-    # worker_id별 cam1+cam2 평균
+    cam1_ided, cam1_unided = _split(d1)
+    cam2_ided, cam2_unided = _split(d2)
+
+    # 2) 직접 식별된 워커 모두 모음 (worker_id → [위치들])
+    workers_by_id: dict[str, list[tuple[float, float]]] = {}
+    for wid, xy in cam1_ided + cam2_ided:
+        workers_by_id.setdefault(wid, []).append(xy)
+
+    # 3) 한쪽이 식별한 워커의 평균 위치 → 다른 쪽 미식별 워커 흡수
+    def _absorb(unided_xys, source_cam_label):
+        """unided_xys 중 식별된 워커 위치 근처에 있는 점을 그 워커 그룹에 추가."""
+        if not unided_xys or not workers_by_id:
+            return
+        # 현재까지 모인 워커별 평균 위치 (매번 다시 계산해서 흡수 후 갱신 반영)
+        for unided_xy in unided_xys:
+            best_wid = None
+            best_dist = float("inf")
+            for wid, pts in workers_by_id.items():
+                cx = float(np.mean([p[0] for p in pts]))
+                cy = float(np.mean([p[1] for p in pts]))
+                d = ((unided_xy[0] - cx) ** 2 + (unided_xy[1] - cy) ** 2) ** 0.5
+                if d <= CROSS_CAM_MATCH_RADIUS and d < best_dist:
+                    best_dist = d
+                    best_wid = wid
+            if best_wid is not None:
+                workers_by_id[best_wid].append(unided_xy)
+
+    # cam1 미식별 → cam2 식별 워커에 매칭, 그 반대도 마찬가지
+    _absorb(cam1_unided, "cam1")
+    _absorb(cam2_unided, "cam2")
+
+    # 4) worker_id 별 평균
     workers_xy: dict[str, tuple[float, float]] = {}
     for wid, pts in workers_by_id.items():
         workers_xy[wid] = (
             float(np.mean([p[0] for p in pts])),
             float(np.mean([p[1] for p in pts])),
         )
+
+    # 5) forklift / dropzone (기존 로직)
+    forklifts, boxes = [], []
+    for d in d1 + d2:
+        t = d["type"]
+        if t == "forklift":
+            forklifts.append((d["world"]["x"], d["world"]["y"]))
+        elif t in BOX_CLASS_NAMES:
+            boxes.append((d["world"]["x"], d["world"]["y"]))
 
     forklift_xy = None
     if forklifts:
@@ -728,9 +773,10 @@ def main():
         sys.exit(1)
 
     print("[cam] 캘리브레이션 확인 중...")
-    ensure_calibration("cam1")
+    interactive = not args.no_prompt
+    ensure_calibration("cam1", rtsp_url=rtsp1, interactive=interactive)
     if not args.no_cam2:
-        ensure_calibration("cam2")
+        ensure_calibration("cam2", rtsp_url=rtsp2, interactive=interactive)
 
     print(f"[cam] cam1 연결: {rtsp1}")
     cam1 = VideoStream(rtsp1).start()
@@ -812,43 +858,67 @@ def main():
                     tr.update_dropzone(center=smoothed_dz)
 
             crane_active = 0  # TODO: MQTT crane state
-            rt.push(forklift_xy, push_worker, audio_score, crane_active)
 
-            risk = None
-            if rt.ready():
-                risk = rt.predict()  # (1, 2)
+            # ── 멀티 워커: 각 worker_id 별 tracker/kinematics 갱신 + push ──
+            for wid, wxy in workers_xy.items():
+                if wid not in trackers:
+                    if len(trackers) >= MAX_WORKERS:
+                        continue   # 동시 추적 한도 초과
+                    trackers[wid] = RealtimeInference(model, device="cpu")
+                    if has_live_dz:
+                        trackers[wid].update_dropzone(
+                            center=tuple(current_dz_center.tolist())
+                        )
+                    kinematics[wid] = WorkerKinematics()
+                kinematics[wid].update(wxy)
+                last_seen[wid] = now
+                trackers[wid].push(forklift_xy, wxy, audio_score, crane_active)
 
-                # 매 프레임마다 cooldown 체크 후 MQTT 발행 + DB 저장 (백그라운드 스레드)
-                # snapshot 용 프레임: cam1 우선, 없으면 cam2
-                snapshot_frame = (
-                    f1 if (ret1 and f1 is not None)
-                    else f2 if (ret2 and f2 is not None)
-                    else None
-                )
+            # 오래 안 보이는 worker tracker 제거
+            stale = [wid for wid, ts in last_seen.items()
+                     if now - ts > EVICTION_SEC]
+            for wid in stale:
+                trackers.pop(wid, None)
+                kinematics.pop(wid, None)
+                last_seen.pop(wid, None)
+
+            # ── 워커별 risk 예측 ──
+            risks_per_worker: dict[str, np.ndarray] = {}
+            for wid, tr in trackers.items():
+                if tr.ready():
+                    risks_per_worker[wid] = tr.predict()  # (1, 2)
+
+            # snapshot 용 프레임: cam1 우선, 없으면 cam2
+            snapshot_frame = (
+                f1 if (ret1 and f1 is not None)
+                else f2 if (ret2 and f2 is not None)
+                else None
+            )
+
+            # 위험한 워커가 1명이라도 있으면 MQTT/ DB 발행 (cooldown 은 maybe_publish 가 처리)
+            for wid, risk in risks_per_worker.items():
                 pred = FusionPrediction.from_model_output(risk)
                 if pred.has_alert(args.threshold):
                     maybe_publish(pred, args.threshold, frame=snapshot_frame)
 
-                # 콘솔 로그 (200ms마다)
-                if now - last_print >= print_period:
-                    last_print = now
-                    line = (f"t={datetime.now().strftime('%H:%M:%S.%f')[:-3]}  "
-                            f"audio={audio_score:.2f}  ")
-                    if worker_xy:
-                        line += f"W=({worker_xy[0]:+.2f},{worker_xy[1]:+.2f})  "
-                    else:
-                        line += f"W=(none)              "
-                    if forklift_xy:
-                        line += f"F=({forklift_xy[0]:+.2f},{forklift_xy[1]:+.2f})  "
-                    else:
-                        line += f"F=(none)              "
-                    line += (f"forklift_risk={risk[0,0]:.3f}  "
-                            f"dropzone_risk={risk[0,1]:.3f}")
-                    print(line)
-
-                    # 콘솔 알림 (시각 디버깅용 — MQTT는 위에서 이미 처리)
+            # 콘솔 로그 (200ms마다)
+            if risks_per_worker and now - last_print >= print_period:
+                last_print = now
+                ts_str = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                fork_str = (f"F=({forklift_xy[0]:+.2f},{forklift_xy[1]:+.2f})"
+                            if forklift_xy else "F=(none)              ")
+                print(f"t={ts_str}  audio={audio_score:.2f}  {fork_str}  "
+                      f"workers={len(risks_per_worker)}")
+                for wid, risk in risks_per_worker.items():
+                    wxy = workers_xy.get(wid)
+                    wstr = (f"({wxy[0]:+.2f},{wxy[1]:+.2f})"
+                            if wxy else "(none)")
+                    print(f"  - {wid} {wstr}  "
+                          f"forklift_risk={risk[0,0]:.3f}  "
+                          f"dropzone_risk={risk[0,1]:.3f}")
+                    pred = FusionPrediction.from_model_output(risk)
                     for p in pred.triggered(args.threshold):
-                        print(f"  🚨 ALERT → {p.threat_type.value} "
+                        print(f"      🚨 {wid} ALERT → {p.threat_type.value} "
                               f"prob={p.prob:.3f} ({p.level.value})")
 
             # ── 시각화 ──

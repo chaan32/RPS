@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import asyncio
 
+import httpx
 from aiomqtt import Client, MqttError
 
 from risk_output import (
@@ -28,6 +29,45 @@ from risk_output import (
     ThreatType,
     DANGER_THRESHOLD,
 )
+
+
+# ── /send-alert HTTP 호출 (server 의 MQTT 발행 엔드포인트 경유) ──
+# 정책: 위험 판단되면 위협 종류 무관 maker_id=4, direction=back 으로 1회 호출.
+ALERT_SERVER_URL = os.getenv("FUSION_SERVER_URL", "http://127.0.0.1:1122")
+ALERT_MAKER_ID = "4"
+ALERT_DIRECTION = "back"
+
+
+def publish_alert_via_server_sync(
+    pred: FusionPrediction,
+    threshold: float = DANGER_THRESHOLD,
+    server_url: str | None = None,
+    maker_id: str = ALERT_MAKER_ID,
+    direction: str = ALERT_DIRECTION,
+    timeout: float = 3.0,
+) -> list[dict]:
+    """위험 감지 시 server /send-alert 1회 호출.
+
+    fusion 결과의 threat type(forklift/dropzone) 무관하게 고정 파라미터로 발행한다.
+    realtime_camera 의 cooldown 은 호출 측(maybe_publish)이 처리하므로
+    여기서는 has_alert 만 체크하고 바로 호출.
+    """
+    if not pred.has_alert(threshold):
+        return []
+    url = f"{(server_url or ALERT_SERVER_URL).rstrip('/')}/send-alert"
+    params = {"maker_id": maker_id, "direction": direction}
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        # downstream 코드가 'topic'/'message' 키를 기대하므로 그대로 전달
+        return [data]
+    except httpx.HTTPStatusError as e:
+        return [{"status": "fail",
+                 "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}]
+    except Exception as e:
+        return [{"status": "fail", "error": str(e)}]
 
 
 # ── 아두이노 펌웨어 기준 토픽/payload ──
