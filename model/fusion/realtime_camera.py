@@ -73,49 +73,72 @@ _last_publish_ts: dict[ThreatType, float] = {}
 def _publish_in_background(
     pred: FusionPrediction,
     threshold: float,
+    direction: str,
     frame_jpeg: bytes | None = None,
 ) -> None:
     """데몬 스레드에서 MQTT 발행 + DB 기록 — cv2 루프 블로킹 방지.
 
     순서: 아두이노 신호(MQTT) 먼저, 그 다음 DB 비동기 저장.
+    direction: 워커 body frame 기준 위협 방향에서 매핑된 펌웨어 명령
+               ("back" | "left" | "right" | "all"). publisher 가 받아서
+               /send-alert?direction=... 로 그대로 전달.
     frame_jpeg 있으면 스냅샷 업로드 엔드포인트 사용, 없으면 placeholder 경로.
     """
     # 1) /send-alert HTTP 호출 (server 가 MQTT 로 forklift/4/vibration 발행)
     try:
-        results = publish_alert_via_server_sync(pred, threshold=threshold)
+        results = publish_alert_via_server_sync(
+            pred, threshold=threshold, direction=direction,
+        )
         for r in results:
             if r.get("status") == "success":
                 print(f"  📡 /send-alert → topic='{r.get('topic')}' "
-                      f"payload='{r.get('message')}'")
+                      f"payload='{r.get('message')}'  (dir={direction})")
             else:
                 print(f"  ⚠️  /send-alert fail: {r}")
     except Exception as e:
         print(f"  ⚠️  alert error: {e}")
 
     # 2) DB 저장 (incident_logs 비동기 기록)
-    try:
-        for p in pred.triggered(threshold):
-            if frame_jpeg is not None:
+    # snapshot 업로드(USB 미마운트, 권한 등)가 실패해도 incident_logs 행은
+    # 반드시 남도록 placeholder 경로로 폴백한다.
+    for p in pred.triggered(threshold):
+        res: dict | None = None
+        if frame_jpeg is not None:
+            try:
                 res = log_pair_with_snapshot_sync(p, frame_jpeg)
-            else:
+            except Exception as e:
+                print(f"  ⚠️  DB log w/ snapshot exception: {e}")
+                res = None
+            if not res or res.get("status") != "ok":
+                print(f"  ↪︎  snapshot 업로드 실패 → placeholder 경로로 재시도. detail={res}")
+                try:
+                    res = log_pair_sync(p)
+                except Exception as e:
+                    res = {"status": "fail", "error": f"fallback log_pair: {e}"}
+        else:
+            try:
                 res = log_pair_sync(p)
-            if res.get("status") == "ok":
-                snap = res.get("snapshot_path", "(placeholder)")
-                print(f"  💾 DB log id={res['id']}  {p.threat_type.value} "
-                      f"({p.level.value})  snapshot={snap}")
-            else:
-                print(f"  ⚠️  DB log fail: {res.get('error')}")
-    except Exception as e:
-        print(f"  ⚠️  DB log error: {e}")
+            except Exception as e:
+                res = {"status": "fail", "error": str(e)}
+
+        if res and res.get("status") == "ok":
+            snap = res.get("snapshot_path", "(placeholder)")
+            print(f"  💾 DB log id={res.get('id')}  {p.threat_type.value} "
+                  f"({p.level.value})  snapshot={snap}")
+        else:
+            print(f"  ⚠️  DB log fail: {res}")
 
 
 def maybe_publish(
     pred: FusionPrediction,
     threshold: float,
+    direction: str,
     frame=None,
 ) -> None:
     """cooldown 체크 후 위험한 PairRisk만 백그라운드 스레드로 발행.
 
+    direction: 위협 방향에서 매핑된 펌웨어 명령
+               ("back" | "left" | "right" | "all").
     frame: 알림 시점의 카메라 BGR 프레임 (cv2 ndarray). None이면 placeholder 경로 사용.
     """
     now = time.time()
@@ -141,7 +164,7 @@ def maybe_publish(
 
     threading.Thread(
         target=_publish_in_background,
-        args=(pred, threshold, frame_jpeg),
+        args=(pred, threshold, direction, frame_jpeg),
         daemon=True,
     ).start()
 
@@ -256,6 +279,43 @@ class WorkerKinematics:
         if -135 <= deg <= -45:
             return "right"
         return "rear"
+
+
+# 워커 body frame 4방향 → ESP32 펌웨어 진동 명령 매핑.
+# 펌웨어가 인식하는 4종: "back" / "left" / "right" / "all"
+#   - rear  → back  (위협이 뒤에 있음 = 뒤로 물러나라)
+#   - left  → left  (좌측 진동)
+#   - right → right (우측 진동)
+#   - front → all   (정면 위협은 가장 급박 → 전 모터 진동으로 즉시 정지 신호)
+# 매핑을 이 dict 한 곳에 두므로 정책 바꾸려면 여기만 손대면 된다.
+_BODY_TO_PAYLOAD = {
+    "rear":  "back",
+    "left":  "left",
+    "right": "right",
+    "front": "all",
+}
+
+
+def resolve_direction(
+    pred: FusionPrediction,
+    threshold: float,
+    kin: "WorkerKinematics",
+    forklift_xy: tuple | None,
+    dropzone_xy: tuple | None,
+) -> str:
+    """위험 발생 시점의 펌웨어 진동 방향 결정.
+
+    우선순위: forklift > dropzone (지게차 충돌이 더 즉각적인 위협).
+    - forklift trigger: 워커의 facing(heading) 기준으로 위협을 4방향에 투영.
+    - dropzone trigger: 공중 인양물 낙하 위협은 방향이 무의미 → "all".
+    """
+    triggered_types = {p.threat_type for p in pred.triggered(threshold)}
+    if ThreatType.FORKLIFT in triggered_types and forklift_xy is not None:
+        body_dir = kin.collision_direction(forklift_xy)
+        return _BODY_TO_PAYLOAD.get(body_dir, "all")
+    if ThreatType.DROPZONE in triggered_types:
+        return "all"
+    return "all"
 
 
 # cam2 가 ArUco 를 못 본 워커를 cam1 의 식별된 워커와 묶는 거리 임계값(m).
@@ -896,10 +956,21 @@ def main():
             )
 
             # 위험한 워커가 1명이라도 있으면 MQTT/ DB 발행 (cooldown 은 maybe_publish 가 처리)
+            # direction 은 워커 body frame 기준으로 위협 방향을 4방향에 투영해
+            # 펌웨어 명령(back/left/right/all)으로 매핑한 값.
+            bev_dz_xy_for_dir = (
+                tuple(current_dz_center.tolist()) if has_live_dz else None
+            )
             for wid, risk in risks_per_worker.items():
                 pred = FusionPrediction.from_model_output(risk)
                 if pred.has_alert(args.threshold):
-                    maybe_publish(pred, args.threshold, frame=snapshot_frame)
+                    direction = resolve_direction(
+                        pred, args.threshold, kinematics[wid],
+                        forklift_xy, bev_dz_xy_for_dir,
+                    )
+                    maybe_publish(
+                        pred, args.threshold, direction, frame=snapshot_frame,
+                    )
 
             # 콘솔 로그 (200ms마다)
             if risks_per_worker and now - last_print >= print_period:
