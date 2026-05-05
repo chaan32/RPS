@@ -1,0 +1,11 @@
+# MediaMTX (RTSP server) — Mock RTSP 검증용 설정.
+#
+# MediaMTX 1.x 부터는 path 가 명시 정의되어야 publish 허용 (default deny).
+# `all_others` 는 와일드카드 — 모든 path 에서 publisher 허용.
+#
+# 사용:
+#   mediamtx docker/mediamtx.yml
+
+paths:
+  all_others:
+    source: publisher

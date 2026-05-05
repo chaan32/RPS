@@ -1,0 +1,59 @@
+# Docker 빌드 컨텍스트에서 제외할 파일/폴더.
+# 이미지 크기 + 빌드 속도 최적화.
+
+# ── Git / 메타 ─────────────────────────────────────────────────────────
+.git/
+.gitignore
+.gitattributes
+.github/
+.dvc/
+.dvcignore
+~/dvc-storage
+
+# ── Python 캐시 / 가상환경 ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ── 로컬 개발 환경 ────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+.claude/
+.env
+.env.local
+
+# ── 학습 / 노트북 (운영 컨테이너에 불필요) ───────────────────────────────
+**/notebooks/
+**/dataset/
+model/yolo/runs/
+model/yamnet/data_prep/
+model/yamnet/tools/
+model/yamnet/anomaly_embeddings.npy
+# model/fusion/training/ 는 운영에도 필요 (inference.py 가 training/dataset.py 의 T_WIN 을 import).
+# 학습 산출물(history/png) 만 개별 제외:
+model/fusion/training/history.json
+model/fusion/training/*.png
+
+# ── 사전학습 모델 (Dockerfile 에서 다시 다운로드) ───────────────────────
+yolo11n*.pt
+model/yolo/yolo11n*.pt
+
+# ── 빌드 / 임시 산출물 ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+firmware/esp32_audio_ws/.pio/
+snapshots/
+
+# ── Docker 자체 ───────────────────────────────────────────────────────
+Dockerfile.*
+docker-compose.yml
+.dockerignore
+
+# ── 문서 ─────────────────────────────────────────────────────────────
+*.md
+JCH.html

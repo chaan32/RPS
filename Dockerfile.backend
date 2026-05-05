@@ -1,0 +1,53 @@
+# 산업 안전 모니터링 시스템 — 백엔드 컨테이너
+# FastAPI 서버 + fusion 추론 subprocess 한 컨테이너에서 실행.
+#
+# 빌드:   docker compose build backend
+# 실행:   docker compose up backend
+
+FROM python:3.11-slim
+
+# ── 시스템 의존성 ───────────────────────────────────────────────────────
+# - libgl1 / libglib2.0-0 : OpenCV 런타임
+# - ffmpeg                 : RTSP 디코딩
+# - libsndfile1            : librosa / soundfile
+# - curl                   : healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    ffmpeg \
+    libsndfile1 \
+    curl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Python 의존성 ──────────────────────────────────────────────────────
+# requirements.txt 만 먼저 복사해 캐시 활용 (코드 변경 시 재설치 방지)
+# torch / torchvision 은 CPU 변종 사용 — CUDA 라이브러리 제외, 약 1.5GB 절감.
+# GPU 가 필요하면 --extra-index-url 라인을 제거.
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r requirements.txt
+
+# ── 사전학습 모델 미리 다운로드 (런타임 인터넷 의존 제거) ─────────────────
+# yolo11n-pose.pt — Ultralytics 자동 다운로드 (첫 사용 시).
+# 빌드 시점에 받아 이미지에 박으면 컨테이너 시작이 빠르고 오프라인 가능.
+RUN python -c "from ultralytics import YOLO; YOLO('yolo11n-pose.pt')"
+
+# ── 애플리케이션 코드 + 모델 가중치 ─────────────────────────────────────
+# 운영에 필요한 폴더만 복사 (notebooks / runs / dataset 등은 .dockerignore 로 제외)
+COPY . .
+
+# ── 환경 변수 기본값 ────────────────────────────────────────────────────
+# 컨테이너에서는 cv2.imshow 가 안 되므로 BEV 시각화 윈도우 자동 비활성화.
+# OPENCV_FFMPEG_CAPTURE_OPTIONS 는 코드에서 자체 설정.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LOCAL_SNAPSHOT_PATH=/app/snapshots
+
+EXPOSE 1122
+
+# ── 실행: FastAPI lifespan 이 fusion subprocess 를 자동 spawn ───────────
+CMD ["python", "-m", "server.main"]
