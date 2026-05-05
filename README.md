@@ -106,8 +106,8 @@
 | 인양물(hoist) | 1,115 | 0.999 | 1.000 | 0.981 |
 
 - **Precision 1.000** → 검증셋 전체에서 헛검출 0건
-- 학습: `model/yolo_prac/runs/detect/train4/`, 50 epoch
-- 가중치: `YOLO/best_final.pt` *(Git LFS 권장)*
+- 학습: `model/yolo/runs/detect/train4/`, 50 epoch
+- 가중치: `model/yolo/best_final.pt` (DVC 후보 — 5MB)
 
 #### YAMNet 음향 이상 감지 (줄 끊어짐)
 
@@ -260,7 +260,7 @@ LOCAL_SNAPSHOT_PATH=./snapshots
 SERVER_PORT=1122
 
 # YOLO 커스텀 모델
-BEST_MODEL_PATH=YOLO/best_final.pt
+BEST_MODEL_PATH=model/yolo/best_final.pt
 ```
 
 ### 3. 캘리브레이션 (최초 1회)
@@ -334,34 +334,68 @@ pio device monitor
 
 ```
 ai_project/
-├── calibration/                    # 카메라별 H 행렬 + ArUco 실측 좌표
+├── calibration/                       # 카메라별 H 행렬 + ArUco 실측 좌표
 │   ├── world_markers.json
 │   └── cam{1,2}_homography.json
-├── firmware/esp32_audio_ws/        # ESP32-S3 PlatformIO 프로젝트
-├── frontend/                       # React 19 + Vite + Tailwind
+│
+├── firmware/esp32_audio_ws/           # ESP32-S3 PlatformIO 프로젝트
+│
+├── frontend/                          # React 19 + Vite + Tailwind
 │   └── src/components/
+│
 ├── input/
-│   ├── audio/                      # ESP32 audio WebSocket
-│   └── media/                      # 카메라/캘리브레이션/world_pipeline
+│   ├── audio/                         # ESP32 audio WebSocket
+│   └── media/                         # 미디어 파이프라인
+│       ├── camera.py                  ⭐ RTSP 스트림 (VideoStream)
+│       ├── world_mapper.py            ⭐ 픽셀 → 월드 좌표
+│       ├── calibrate_homography.py    ⭐ H 행렬 생성
+│       ├── pipeline/                  ⭐ DetectionPipeline 통합 모듈
+│       │   ├── engine.py              (DetectionPipeline 클래스)
+│       │   ├── runner.py              (run_image / run_live / main)
+│       │   ├── visualization.py
+│       │   ├── calibration_runtime.py
+│       │   └── constants.py
+│       ├── tools/                     디버깅 도구 (identify_markers / show_dual_cam / verify_homography)
+│       └── test/                      격리 테스트 (test_cam, test_worker_id)
+│
 ├── model/
-│   ├── fusion/                     # PairwiseInteractionFusionModel
-│   │   ├── model.py / dataset.py / train.py / inference.py
-│   │   ├── pair_labels.py / scenarios_synthetic.py
-│   │   ├── publisher.py / db_logger.py / risk_output.py
-│   │   ├── realtime_camera.py     # 통합 실시간 파이프라인
+│   ├── fusion/                        ⭐ Pairwise Interaction Fusion
+│   │   ├── model.py                   (PairwiseInteractionFusionModel)
+│   │   ├── inference.py               (RealtimeInference)
+│   │   ├── risk_output.py             (FusionPrediction / ThreatType)
+│   │   ├── graph_input.py             (Scenario → 텐서)
+│   │   ├── data/                      (scenario_generator / scenarios_synthetic / pair_labels)
+│   │   ├── training/                  (dataset / train / train_with_history / plot_*)
+│   │   ├── runtime/                   (realtime_camera / publisher / db_logger)
 │   │   └── checkpoints/best*.pt
-│   ├── yamnet/                     # 음향 이상 감지
-│   │   ├── detector.py
-│   │   ├── anomaly_centroid.npy
-│   │   └── anomaly_config.json
-│   └── yolo_prac/                  # 커스텀 YOLO 학습 결과
-├── server/                         # FastAPI 백엔드
-│   ├── main.py
-│   ├── database/                   # SQLAlchemy 모델 + USB 저장
-│   ├── pipeline/mqtt/              # aiomqtt handler
-│   └── report/                     # Gemini / Ollama 리포트
-├── YOLO/best_final.pt              # 커스텀 YOLO 가중치
-├── environment.yml
+│   │
+│   ├── yamnet/                        ⭐ 음향 이상 감지
+│   │   ├── detector.py                (YamnetDetector — 운영 외부 import)
+│   │   ├── anomaly_centroid.npy / anomaly_config.json
+│   │   ├── data_prep/                 (record / convert / organize)
+│   │   ├── tools/                     (realtime_detect / test_with_wav)
+│   │   ├── notebooks/                 (yamnet_transfer_learning.ipynb)
+│   │   ├── dataset.dvc                (DVC 메타 — 학습 wav 102개 / 13MB)
+│   │   └── dataset/                   (DVC 관리, .gitignore)
+│   │
+│   └── yolo/                          ⭐ 커스텀 YOLO (forklift / box_1 / box_2)
+│       ├── best_final.pt              (운영 모델 — .env BEST_MODEL_PATH)
+│       ├── data.yaml / custom_botsort.yaml
+│       ├── notebooks/                 (학습 노트북 6개)
+│       └── runs/detect/{train4, train13}
+│
+├── server/                            # FastAPI 백엔드
+│   ├── main.py                        (lifespan 에서 fusion subprocess spawn)
+│   ├── database/                      (SQLAlchemy + USB 저장)
+│   ├── pipeline/mqtt/                 (aiomqtt handler)
+│   └── report/                        (Gemini / Ollama 리포트)
+│
+├── .dvc/                              # DVC 메타 (cache / config)
+├── .dvcignore
+├── ~/dvc-storage/                     # DVC 로컬 remote (사용자 홈)
+│
+├── environment.yml                    # conda venv 정의
+├── ROADMAP.md                         # 5축 향후 계획
 └── README.md
 ```
 
@@ -372,9 +406,9 @@ ai_project/
 | 모델 | 입력 | 출력 | 학습 데이터 | 위치 |
 |---|---|---|---|---|
 | YOLO11-pose | 카메라 frame | person bbox + 17 keypoints | 사전학습 (COCO) | 동적 다운로드 |
-| YOLO custom | 카메라 frame | forklift / hoist bbox | forklift_night_4.16 (50 epoch) | `YOLO/best_final.pt` |
-| YAMNet + Centroid | 1.92s 16kHz mono PCM | (max_sim, is_anomaly) | 24 anomaly + 51 normal wav | `model/yamnet/` |
-| Pairwise Fusion | (B, V=3, T=5, F=8) + adj + scene | risk_matrix (B, N, K=2) | 합성 24 시나리오 (LOFO) | `model/fusion/checkpoints/` |
+| YOLO custom | 카메라 frame | forklift / box_1 / box_2 bbox | forklift_night_4.16 (50 epoch) | `model/yolo/best_final.pt` |
+| YAMNet + Centroid | 1.92s 16kHz mono PCM | (max_sim, is_anomaly) | 24 anomaly + 51 normal wav (DVC) | `model/yamnet/` |
+| Pairwise Fusion | (B, V=3, T=5, F=8) + adj + scene | risk_matrix (B, N, K=2) | 합성 24 시나리오 | `model/fusion/checkpoints/` |
 
 ---
 
