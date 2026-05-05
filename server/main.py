@@ -50,19 +50,19 @@ async def lifespan(app: FastAPI):
     # camera_manager.start_all()
 
     # 카메라 + 월드 좌표 + Fusion 모델 통합 파이프라인을 별도 프로세스로 기동.
-    # realtime_camera.py 내부에서 cam1/cam2_homography.json 존재 여부 자동 체크 +
+    # model.fusion.runtime.realtime_camera 내부에서 cam1/cam2_homography.json 존재 여부 자동 체크 +
     # YOLO + ArUco + 월드 변환 + PairwiseInteractionFusionModel 추론까지 수행.
     # 화면에는 cam1/cam2 영상에 fusion risk 게이지와 ALERT 배너가 오버레이됨.
     # --no-prompt : 캘리브레이션 자동 캡처 (인자 호환성)
     import subprocess, sys
-    pipeline_path = os.path.join(
-        os.path.dirname(__file__), "..", "model", "fusion", "realtime_camera.py"
-    )
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-    # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성!
-    # --no-audio 를 빼서 realtime_camera 가 ESP32 오디오 score(/audio/score) 를 폴링하도록 함.
+    # 서버가 동작하는 프로세스와 다른 별도의 프로세스 새로 생성.
+    # `python -m model.fusion.runtime.realtime_camera` 형태로 실행하여 패키지 import 정상 동작.
+    # cwd 를 PROJECT_ROOT 로 두어 sys.path 에 자동 포함되도록 함.
     cam_proc = subprocess.Popen(
-        [sys.executable, pipeline_path, "--no-prompt"]
+        [sys.executable, "-m", "model.fusion.runtime.realtime_camera", "--no-prompt"],
+        cwd=project_root,
     )
 
     # MQTT 파이프라인 시작
@@ -298,7 +298,7 @@ async def aruco_identify(file: UploadFile = File(...)):
     """
     import cv2
     import numpy as np
-    from input.media.identify_markers import annotate_markers
+    from input.media.tools.identify_markers import annotate_markers
 
     contents = await file.read()
     arr = np.frombuffer(contents, dtype=np.uint8)

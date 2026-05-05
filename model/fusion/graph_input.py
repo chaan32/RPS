@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from scenario_generator import (
+from .data.scenario_generator import (
     Scenario,
     RATE,
     DURATION,

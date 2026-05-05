@@ -27,7 +27,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from graph_input import (
+from .graph_input import (
     V_NODES,
     F_NODE,
     F_SCENE,

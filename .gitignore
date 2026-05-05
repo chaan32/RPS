@@ -21,5 +21,19 @@ Thumbs.db
 .vscode/
 .idea/
 
-# 클로드 설정 
+# 클로드 설정
 .claude
+
+# ── 모델 가중치 / 학습 산출물 ─────────────────────────────────────────
+# Ultralytics 사전학습 모델 (자동 다운로드되므로 커밋 불필요)
+**/yolo11n*.pt
+
+# YAMNet 학습 임베딩 캐시 (운영에서 미사용)
+model/yamnet/anomaly_embeddings.npy
+
+# YAMNet 학습 데이터셋은 DVC 가 관리 (model/yamnet/dataset.dvc 참조)
+# DVC 가 model/yamnet/dataset/ 안의 .gitignore 를 자동 생성하므로 여기선 제외
+
+# ── 운영 산출물 ───────────────────────────────────────────────────────
+# 사고 스냅샷 폴백 디렉토리 (USB 미마운트 시 사용)
+snapshots/

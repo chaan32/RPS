@@ -37,3 +37,4 @@ dependencies:
     - matplotlib>=3.7.0 # 학습 결과 시각화
     - jupyter>=1.0.0 # Jupyter Notebook
     - ipykernel>=6.25.0 # 가상환경 커널 등록
+    - dvc>=3.67.0 # 학습 데이터셋 / 모델 가중치 버전 관리

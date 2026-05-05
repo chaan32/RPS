@@ -1,8 +1,0 @@
-path: C:/Users/niced/Downloads/yolo_image_forklift_hoist/dataset/forklift_night_4.16
-train: images/train
-val: images/val
-test: images/test
-
-names:
-  0: forklift
-  1: hoist

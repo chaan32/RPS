@@ -33,7 +33,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 
-from graph_input import THREAT_FORKLIFT, THREAT_DROPZONE, K_THREATS
+from .graph_input import THREAT_FORKLIFT, THREAT_DROPZONE, K_THREATS
 
 
 # ── 임계값 (inference.py의 DEFAULT_THRESHOLD와 일관) ────────

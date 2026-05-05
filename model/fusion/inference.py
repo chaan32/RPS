@@ -29,9 +29,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from scenario_generator import Scenario, RATE, DZ_CENTER, DZ_RADIUS, N_STEPS
+from .data.scenario_generator import Scenario, RATE, DZ_CENTER, DZ_RADIUS, N_STEPS
 import numpy as _np  # noqa
-from graph_input import (
+from .graph_input import (
     to_graph_input,
     THREAT_FORKLIFT,
     THREAT_DROPZONE,
@@ -42,8 +42,8 @@ from graph_input import (
     NODE_FORKLIFT,
     NODE_DROPZONE,
 )
-from model import PairwiseInteractionFusionModel
-from dataset import T_WIN
+from .model import PairwiseInteractionFusionModel
+from .training.dataset import T_WIN
 
 # 알림 정책
 DEFAULT_THRESHOLD = 0.8

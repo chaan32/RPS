@@ -1,7 +1,7 @@
 """카메라 RTSP 연결 및 프레임 수집 모듈.
 
 VideoStream: 백그라운드 스레드에서 프레임을 계속 갱신하는 스트림 클래스.
-여러 파일(run_yolo.py, dual_cam.py 등)에서 공용으로 사용한다.
+input/media/pipeline/runner.py 와 tools/show_dual_cam.py 등에서 공용으로 사용한다.
 """
 
 import os
