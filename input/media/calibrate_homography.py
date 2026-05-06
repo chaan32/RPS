@@ -30,7 +30,7 @@ ARUCO_PARAMS = cv2.aruco.DetectorParameters()
 
 
 def load_world_markers() -> dict[int, tuple[float, float]]:
-    """world_markers.json → {marker_id: (world_x, world_y)} 딕셔너리."""
+    """아루코 코드 간의 거리를 사람이 직접 기입한 걸 가져오는 것"""
     path = CALIBRATION_DIR / "world_markers.json"
     if not path.exists():
         raise FileNotFoundError(
@@ -42,19 +42,36 @@ def load_world_markers() -> dict[int, tuple[float, float]]:
 
 
 def detect_aruco_centers(image: np.ndarray) -> dict[int, np.ndarray]:
-    """이미지에서 ArUco 감지 → {marker_id: center_pixel(x,y)} 딕셔너리.
-
-    4개 코너의 평균을 중심 픽셀로 사용.
-    """
+    
+    # 사전의 정의한 아루코 코드 설정 값들로 ArucoDetector 객체 생성
     detector = cv2.aruco.ArucoDetector(ARUCO_DICT, ARUCO_PARAMS)
+    # detector 객체로 이미지에서 아루코 코드 감지 
+    """
+    corners = [
+            array([[[312, 470], [322, 470], [322, 490], [312, 490]]]),  # 마커 1 의 4코너
+            array([[...]]),                                               # 마커 2
+            array([[...]]),                                               # 마커 3
+            array([[...]])
+        ]                                               # 마커 4
+    ids     = array([[38], [27], [24], [22]])
+    """
     corners, ids, _ = detector.detectMarkers(image)
+    
     if ids is None:
         return {}
     result = {}
+    # 네개의 코너의 중앙 구하기! 
     for marker_corners, marker_id in zip(corners, ids.flatten()):
         pts = marker_corners[0]  # shape (4, 2)
         center = pts.mean(axis=0)
         result[int(marker_id)] = center
+    """
+    result = {
+    38: array([317.25, 480.30]),   # 마커 38 의 중심 픽셀 (x, y)
+    27: array([193.50, 471.20]),   # 마커 27 의 중심 픽셀
+    24: array([401.75, 215.80]),
+    22: array([ 76.50, 218.70]),
+    """
     return result
 
 
@@ -94,10 +111,10 @@ def compute_homography(
 
 
 def run_calibration(cam_id: str, image_path: Path) -> Path:
-    """캠 ID + 스냅샷 이미지 경로 → H 계산 + JSON 저장.
+    """
+    캠 ID + 스냅샷 이미지 경로를 받아서 H 계산하고 JSON 저장함
 
-    CLI/main 과 world_pipeline.py 양쪽에서 호출 가능.
-    반환: 저장된 JSON 경로.
+    반환: 저장된 JSON 경로
     """
     image_path = Path(image_path)
     if not image_path.exists():
@@ -108,8 +125,22 @@ def run_calibration(cam_id: str, image_path: Path) -> Path:
         raise RuntimeError(f"이미지 로드 실패: {image_path}")
 
     world_centers = load_world_markers()
+    ''' world_centers는 이런 식으로 리턴 된다 
+    {
+    38: (0.00, 0.00),
+    27: (-2.22, 0.00),
+    24: (0.00, 2.34),
+    22: (-2.22, 2.34),
+    }
+    '''
     pixel_centers = detect_aruco_centers(image)
-
+    '''
+    result = {
+    38: array([317.25, 480.30]),   # 마커 38 의 중심 픽셀 (x, y)
+    27: array([193.50, 471.20]),   # 마커 27 의 중심 픽셀
+    24: array([401.75, 215.80]),
+    22: array([ 76.50, 218.70]),
+    '''
     print(f"\n[{cam_id}] 이미지: {image_path.name}")
     print(f"  월드 정의 마커: {len(world_centers)}개 (IDs: {sorted(world_centers)})")
     print(f"  감지된 마커:    {len(pixel_centers)}개 (IDs: {sorted(pixel_centers)})")

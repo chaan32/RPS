@@ -17,7 +17,7 @@ from ..calibrate_homography import run_calibration
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CALIBRATION_DIR = PROJECT_ROOT / "calibration"
 
-
+# RTSP에서 1프레임만 캡처해서 calibraion/test_{cam_id}.jpg로 저장해줌 
 def capture_rtsp_snapshot(
     cam_id: str,
     rtsp_url: str,
@@ -26,13 +26,19 @@ def capture_rtsp_snapshot(
     """RTSP 에서 1프레임만 캡처해 calibration/test_{cam_id}.jpg 로 저장.
 
     스레드 기반 VideoStream 대신 cv2.VideoCapture 를 직접 사용.
+
     macOS + FFmpeg 에서 스레드 VideoStream 재생성 시 Bus error 가 자주 나서
     원샷 캡처는 단순 경로로 처리.
 
     interactive=False 이면 Enter 대기 없이 즉시 캡처 (서버 자동 기동용).
     """
+
+
+    # 캡처 경로
     snap = CALIBRATION_DIR / f"test_{cam_id}.jpg"
     print(f"[{cam_id}] 캘리브레이션 스냅샷 없음")
+
+    
     if interactive:
         input(f"  → {cam_id} 시야에 ArUco 마커 4개를 모두 배치하고 Enter: ")
     else:
@@ -43,20 +49,27 @@ def capture_rtsp_snapshot(
     os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
         "rtsp_transport;tcp|fflags;nobuffer|analyzeduration;0|probesize;32"
     )
+    # VideoCapture 객체를 생성하는 것 ; FFMPEG를 통한 캡처
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    # RTSP 핸드쉐이크 대기 시간
     cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
+    # read를 했을 때 새로운 프레임이 안들어와도 10초는 기다려줌 
     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10000)
+    # 딱 하나의 프레임만 캡처하겠다는 것
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     frame = None
     for _ in range(40):  # 최대 ~4 초 워밍업
+        # ret : result (T/F) / f : frame
         ret, f = cap.read()
         if ret and f is not None:
             frame = f
             break
         time.sleep(0.1)
     cap.release()
+    # 캡처 했으니까 VideoCapture 객체 삭제
     del cap
+    # 지금 당장 삭제하라 .. 시스템 명령어 같은 것 
     gc.collect()
     time.sleep(0.5)  # FFmpeg 리소스 정리 시간
 
