@@ -1,0 +1,38 @@
+# 오분류 윈도우 리포트
+#   total mistakes: 75 / 960  (7.8%)
+#   total windows : 480  (× 2 pair = 960)
+
+## forklift  (38 mistakes)
+  [s05_fork_slow_approach_static_worker]  (6 windows)
+    pred=0.04 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.05 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.15 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.30 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.26 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    ... (1 more)
+
+  [s12_fork_stop_worker_approach]  (4 windows)
+    pred=0.17 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.19 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.37 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.28 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+
+  [s24_dz_static_edge_lift_starts]  (28 windows)
+    pred=0.00 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.02 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.02 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.02 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    pred=0.02 (safe  ) ↔ label=0.50 (warn  )  Δ=-1
+    ... (23 more)
+
+## dropzone  (37 mistakes)
+  [s19_dz_idle_to_lifting_worker_inside]  (36 windows)
+    pred=0.95 (danger) ↔ label=0.50 (warn  )  Δ=+1
+    pred=0.95 (danger) ↔ label=0.50 (warn  )  Δ=+1
+    pred=0.96 (danger) ↔ label=0.50 (warn  )  Δ=+1
+    pred=0.96 (danger) ↔ label=0.50 (warn  )  Δ=+1
+    pred=0.96 (danger) ↔ label=0.50 (warn  )  Δ=+1
+    ... (31 more)
+
+  [s24_dz_static_edge_lift_starts]  (1 windows)
+    pred=0.65 (warn  ) ↔ label=1.00 (danger)  Δ=-1

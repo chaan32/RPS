@@ -56,7 +56,9 @@ class RiskLevel(str, Enum):
     def from_prob(
         cls,
         prob: float,
+        # warn 임계값 : 0.4
         warn: float = WARN_THRESHOLD,
+        # danger 임계값 : 0.8
         danger: float = DANGER_THRESHOLD,
     ) -> "RiskLevel":
         if prob >= danger:
@@ -73,15 +75,18 @@ class ThreatType(str, Enum):
     @property
     def index(self) -> int:
         # graph_input.THREAT_FORKLIFT / THREAT_DROPZONE과 동일.
+        # THREAT_FORKLIFT : 0 DROPZONE : 1로 반환 
         return _THREAT_INDEX[self]
 
     @classmethod
     def from_index(cls, idx: int) -> "ThreatType":
         return _INDEX_TO_THREAT[idx]
 
+    # method를 사용하는데 괄호를 안 쓰고 호출 할 수 있도록.. 
     @property
     def metric_name(self) -> str:
         # JSON 키에 쓰는 동사 (collision_prob / overlap_prob).
+        # 해당 객체가 ThreatType.FORKLIFT 사고면 collision_prob으로, 아니면 overlap_prob으로 
         return "collision_prob" if self is ThreatType.FORKLIFT else "overlap_prob"
 
 
@@ -93,6 +98,9 @@ _INDEX_TO_THREAT = {v: k for k, v in _THREAT_INDEX.items()}
 
 
 # ── PairRisk : 단일 (worker × threat) ──────────────────────
+# 한 개의 쌍 데이터를 담는 immutable 객체 ㅇㅇ W01과 Forklift_A와 0.85 충돌 확률 존재 
+# frozen : 객체의 값을 변경할 수 없도록 (JAVA의 private와 같은 비슷한 역할)
+# dataclass : 생성자, 출력문, 비교연산자를 한번에 완성해주는 데코레이션
 @dataclass(frozen=True)
 class PairRisk:
     worker_id: str
@@ -135,20 +143,28 @@ class FusionPrediction:
         dropzone_id: str = DEFAULT_DROPZONE_ID,
         timestamp: Optional[datetime] = None,
     ) -> "FusionPrediction":
+        # 입력 검증 : shape 확인 
+        # 위험 요소는 2개임 
+        # 인원수는 똑같고 
         if risk_matrix.ndim != 2 or risk_matrix.shape[1] != K_THREATS:
             raise ValueError(
                 f"risk_matrix shape must be (N, {K_THREATS}); got {risk_matrix.shape}"
             )
+        # 입력 검증 : worker_ids 개수 일치
+        # 행의 개수 == 워커 id의 갯수 ㅇㅇ 
         if len(worker_ids) != risk_matrix.shape[0]:
             raise ValueError(
                 f"worker_ids length ({len(worker_ids)}) must match "
                 f"risk_matrix N ({risk_matrix.shape[0]})"
             )
 
+        # threat_id 딕셔너리 만들기 
         threat_ids = {
             ThreatType.FORKLIFT: forklift_id,
             ThreatType.DROPZONE: dropzone_id,
         }
+
+
         pairs: list[PairRisk] = []
         for i, w_id in enumerate(worker_ids):
             for threat in (ThreatType.FORKLIFT, ThreatType.DROPZONE):

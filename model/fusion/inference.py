@@ -8,13 +8,13 @@
 
 출력 JSON 형식 (팀원 제안):
 {
-  "timestamp": "...",
-  "predictions": {
+    "timestamp": "...",
+    "predictions": {
     "W01": {
-      "vs_Forklift_A_collision_prob": 0.85,
-      "vs_DropZone_A_overlap_prob":   0.10
+        "vs_Forklift_A_collision_prob": 0.85,
+        "vs_DropZone_A_overlap_prob":   0.10
+        }
     }
-  }
 }
 """
 
@@ -227,32 +227,33 @@ class RealtimeInference:
       rt = RealtimeInference(model, device='cpu')
       for frame in stream:
           rt.push(forklift_xy, worker1_xy, audio, crane_state)
-          if rt.ready():
+          if rt.ready(): 
               risk = rt.predict()  # (N, K)
               json_pred = risk_matrix_to_json(risk)
               alerts = build_alerts(json_pred)
     """
     def __init__(
         self,
-        model: PairwiseInteractionFusionModel,
-        device: str = "cpu",
-        t_win: int = T_WIN,
-        dist_sigma: float = 2.0,
+        model: PairwiseInteractionFusionModel, # 우리가 쓸 모델
+        device: str = "cpu",                   # cpu or cuda 
+        t_win: int = T_WIN,                    # 슬라이딩 윈도우의 프레임 개수 -> 우리는 20초 동안 초당 5프레임이니까 100 
+        dist_sigma: float = 2.0,                # adjacency Gaussian bandwidth
     ):
-        self.model = model
+        self.model = model 
         self.device = device
         self.t_win = t_win
         self.dist_sigma = dist_sigma
-        self.dt = 1.0 / RATE
+        self.dt = 1.0 / RATE                   # 0.2 
 
         # ring buffer
-        self._buf_w = deque(maxlen=t_win)         # worker (T, 2)
-        self._buf_f = deque(maxlen=t_win)         # forklift (T, 2) — NaN 허용
-        self._buf_audio = deque(maxlen=t_win)     # (T,)
-        self._buf_crane = deque(maxlen=t_win)     # (T,) int
+        self._buf_w = deque(maxlen=t_win)         # worker (T, 2) : 워커 위치 
+        self._buf_f = deque(maxlen=t_win)         # forklift (T, 2) — NaN 허용 : 지게차 위치 
+        self._buf_audio = deque(maxlen=t_win)     # (T,) : 오디오 
+        self._buf_crane = deque(maxlen=t_win)     # (T,) int : 크레인 상태. 인양중, 아님 
+
         # 동적 dropzone (인양물 위치). None이면 학습 default(DZ_CENTER) 사용.
-        self._dropzone_center = np.array(DZ_CENTER, dtype=np.float32)
-        self._dropzone_radius = float(DZ_RADIUS)
+        self._dropzone_center = np.array(DZ_CENTER, dtype=np.float32) # 드롭존 중앙
+        self._dropzone_radius = float(DZ_RADIUS)                      # 드롭존 크기
 
     def push(
         self,
@@ -275,7 +276,7 @@ class RealtimeInference:
     ) -> None:
         """동적 dropzone 갱신 (인양물 좌표가 들어올 때마다 호출).
 
-        center=None이면 변경 없음 (마지막 알려진 값 유지).
+        center=None이면 변경 없음 (마지막으로 알려진 값 유지).
         검출이 일시 끊겨도 직전 위치 유지.
         """
         if center is not None:
@@ -284,28 +285,32 @@ class RealtimeInference:
             self._dropzone_radius = float(radius)
 
     def ready(self) -> bool:
+        # 버퍼에 쌓인 크기가 우리가 지정한 sliding window 크기 이상이면 ㄱ 
         return len(self._buf_w) >= self.t_win
 
     def predict(self) -> np.ndarray:
         """
         Returns risk_matrix: (N=1, K=2)
         """
-        assert self.ready(), "buffer not full yet"
+        assert self.ready(), "buffer not full yet" # ready()가 false 리턴하면 error 발생 함. 호출할 때 반드시 ready를 확인하고 호출하는게 중요 함ㅋ
 
         # ring buffer → Scenario-like 텐서 (윈도우 단일)
+        # _buf~ : 모두 deque 형태의 데이터였음 
+        # 이걸 모두 numpy로 변환 
         f_arr = np.stack(list(self._buf_f), axis=0)        # (T_WIN, 2)
         w_arr = np.stack(list(self._buf_w), axis=0)        # (T_WIN, 2)
         audio_arr = np.array(self._buf_audio, dtype=np.float32)  # (T_WIN,)
         crane_arr = np.array(self._buf_crane, dtype=np.int32)    # (T_WIN,)
 
-        # 미니 Scenario 만들어서 to_graph_input 재사용
+        # 미니 Scenario 만들어서 to_graph_input 재사용 
+        # 학습했던 Scenario 객체와 같은 형태로 .. 
         mini = Scenario(
             name="_realtime",
             forklift=f_arr,
             worker1=w_arr,
             crane_state=crane_arr,
             audio=audio_arr,
-            labels=None,
+            labels=None, # 정답 라벨 없음 -> 예측이 필요한 것 
         )
         # 주의: to_graph_input은 N_STEPS 가정이 아니라 입력 길이를 그대로 사용함
         nodes, adj, scene = to_graph_input(

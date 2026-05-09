@@ -87,10 +87,10 @@ def _velocity(pos: np.ndarray, dt: float) -> np.ndarray:
     return vel
 
 
-# ── 핵심 변환 함수 ──────────────────────────────────
+# ── 핵심 변환 함수 ────────────────────────────────── 시작점
 def to_graph_input(
     scenario: Scenario,
-    dt: float = 1.0 / RATE,
+    dt: float = 1.0 / RATE, # 5프레임으로 지정했으니까 RATE=5
     dist_sigma: float = 1.0,
     dropzone_center: np.ndarray | None = None,
     dropzone_radius: float | None = None,
@@ -101,10 +101,8 @@ def to_graph_input(
     Args:
       scenario: Scenario 객체
       dt:       time-step 간격 (초). 기본 0.2s @ 5Hz.
-      dist_sigma: Adjacency Gaussian kernel의 bandwidth (m).
-                  sigma 작을수록 근거리만 연결, 클수록 멀어도 연결.
-      dropzone_center: (2,) 동적 dropzone 좌표. None이면 DZ_CENTER 상수 사용.
-                       (T, 2) 형태로 시간별 다른 위치도 허용 (인양물 이동).
+      dist_sigma: Adjacency Gaussian kernel의 bandwidth (m). ; sigma 작을수록 근거리만 연결, 클수록 멀어도 연결.
+      dropzone_center: (2,) 동적 dropzone 좌표. None이면 DZ_CENTER 상수 사용. (T, 2) 형태로 시간별 다른 위치도 허용 (인양물 이동)
       dropzone_radius: dropzone 반경. None이면 DZ_RADIUS 상수 사용.
 
     Returns:
@@ -112,17 +110,22 @@ def to_graph_input(
       adj:   (T, V, V)      float32 — self-loop 0
       scene: (T, 2)         float32 — [audio, crane_active]
     """
+    # 100 프레임 짜리인걸 확인, 시계열 길이 T 확정
     T = scenario.worker1.shape[0]
 
     # 동적 dropzone 처리
     if dropzone_center is None:
-        dropzone_center = DZ_CENTER
-    dz_arr = np.asarray(dropzone_center, dtype=np.float32)
+        dropzone_center = DZ_CENTER # 비어 있다면 디폴드 값 사용 
+    dz_arr = np.asarray(dropzone_center, dtype=np.float32) #numpy 배열로 변환하기 
+
+
+    # dropzone이 고정이라 디폴트 드롭존으로 설정하고 dz_arr를 만들었는데, 그렇게되면 [x,y] 형태가 되어 버려서 그걸 (T,2)행렬 형태로 만듦
     if dz_arr.ndim == 1:                      # (2,) → (T, 2)
         dz_arr = np.tile(dz_arr, (T, 1))
     dz_radius_val = float(DZ_RADIUS if dropzone_radius is None else dropzone_radius)
 
     # ── 각 엔티티 위치 정리 ──
+    # 내부 헬퍼 함수를 통해서, NaN 값을 999.0, 999.0으로 치환하기 
     w_pos, _ = _sanitize_positions(scenario.worker1)
     f_pos, _ = _sanitize_positions(scenario.forklift)
     # 드롭존: 동적 좌표 적용
@@ -154,27 +157,37 @@ def to_graph_input(
     nodes[NODE_DROPZONE, :, 6] = 1.0  # is_dropzone
     nodes[NODE_DROPZONE, :, 7] = dz_radius_val
 
-    # ── Adjacency (거리 기반 Gaussian kernel) ──
-    # positions per time-step: (T, V, 2)
+    # ── Adjacency (거리 기반 Gaussian kernel) ── 
+    # 어떤 게 어떤 거랑 가까운지 계산 즉, 매 시점마다 워커-지게차-드롭존 사이 거리를 재서, 가까울수록 큰 값 멀수록 작은 값으로 변환
+
+    # positions per time-step: (T, V, 2) - node에서 위치 정보만 빼기 
     pos_tv = nodes[:, :, 0:2].transpose(1, 0, 2)  # (T, V, 2)
-    # pairwise diff: (T, V, V, 2)
+    # pairwise diff: (T, V, V, 2) - 모든 노드 페어 사이의 차이 벡터 계산 함 
     diff = pos_tv[:, :, None, :] - pos_tv[:, None, :, :]
+    # 차이를 거리로 
     dist = np.linalg.norm(diff, axis=-1).astype(np.float32)  # (T, V, V)
+    # 거리를 adjacency로 변환 
     adj = np.exp(-dist / dist_sigma)
-    # self-loop 제거
+    # self-loop 제거 
     eye = np.eye(V_NODES, dtype=np.float32)
     adj = adj * (1.0 - eye[None, :, :])
+    # (100, 3, 3) 형태로 나옴
+    # 가까운 노드일수록 더 강하게 영향을 준다고 연산을 해야하기 때문에 필요 함 
 
     # ── Scene context ──
     # pair-wise 명시 feature (모델 학습 부담 줄이기 위해 directly 제공)
+    
+    # 지게차가 보였는지 체크하기. 보임 -> 1 안 보임 -> 0
     fork_present_per_step = (~np.isnan(scenario.forklift).any(axis=1)).astype(np.float32)
+    # 작업자-지게차 거리
     dist_w_f = np.linalg.norm(w_pos - f_pos, axis=-1).astype(np.float32)
+    # 작업자-드롭존 거리
     dist_w_dz = np.linalg.norm(w_pos - dz_pos, axis=-1).astype(np.float32)
 
     # 부재 시 거리는 큰 값(20.0)으로 cap (sentinel 1000 그대로면 normalize 안 됨)
     dist_w_f = np.where(fork_present_per_step > 0, dist_w_f, 20.0)
 
-    # closing speed: worker→forklift 방향으로 닫히는 속도 (양수=접근)
+    # closing speed: worker→forklift 방향으로 접근하는 속도 (양수=접근)
     rel = f_pos - w_pos
     rel_norm = np.linalg.norm(rel, axis=-1, keepdims=True) + 1e-6
     unit = rel / rel_norm
@@ -183,14 +196,16 @@ def to_graph_input(
     closing_w_f = np.where(fork_present_per_step > 0, closing_w_f, 0.0)
 
     scene = np.stack(
-        [scenario.audio.astype(np.float32),
-         scenario.crane_state.astype(np.float32),
-         dist_w_f,
-         dist_w_dz,
-         fork_present_per_step,
-         closing_w_f],
+        [
+            scenario.audio.astype(np.float32),          # 오디오 score 시계열
+            scenario.crane_state.astype(np.float32),    # 크레인 활성 시계열
+            dist_w_f,                                  # 작업자 - 지게차 거리 시계열
+            dist_w_dz,                                 # 작업자 - 드롭존 거리 시계열
+            fork_present_per_step,                     # 지계차 존재 시계열
+            closing_w_f                                # 작업자 - 지게차 접근 속도 시계열
+        ],
         axis=1,
-    )  # (T, 6)
+      )  # (T, 6)
 
     return nodes, adj, scene
 

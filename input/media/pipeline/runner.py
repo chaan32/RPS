@@ -194,7 +194,7 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
                     "world":       {"x": 4.05, "y": 1.85},
                 },
                 {
-                    "type":        "box_1",
+                    "type":        "box_1",z
                     "track_id":    None,
                     "bbox_px":     [600.0, 100.0, 680.0, 180.0],
                     "foot_px":     [640.0, 180.0],

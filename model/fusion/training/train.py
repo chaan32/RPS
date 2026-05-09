@@ -7,11 +7,13 @@ Metric:  per-pair / per-class precision, recall, F1, accuracy
 Output:  checkpoints/best.pt  (validation F1 macro 평균 기준 최고)
 
 실행:
-  python train.py
+  python -m model.fusion.training.train                       # 합성 24개만
+  python -m model.fusion.training.train --unity-dir <path>    # 합성 + Unity
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import time
 
@@ -22,6 +24,7 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score
 
 from ..data.scenarios_synthetic import build_synthetic_24
+from ..data.scenarios_unity import load_unity_scenarios
 from .dataset import FusionDataset, split_scenarios
 from ..model import PairwiseInteractionFusionModel
 from ..graph_input import THREAT_FORKLIFT, THREAT_DROPZONE
@@ -161,7 +164,7 @@ def format_metrics_detail(metrics: dict, prefix: str = "") -> None:
 
 
 # ── Main ────────────────────────────────────────────
-def main():
+def main(unity_dir: str | None = None):
     set_seed(SEED)
     # checkpoints/ 는 fusion/ root 에 있음 (이 파일은 fusion/training/ 에 있으므로 부모로 한 번 올라감)
     fusion_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -178,8 +181,13 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"device: {device}\n")
 
-    # 데이터
+    # 데이터 — 합성 24 + (옵션) Unity 시나리오
     scenarios = build_synthetic_24(seed=SEED)
+    print(f"[data] synthetic: {len(scenarios)}")
+    if unity_dir:
+        unity_scenarios = load_unity_scenarios(unity_dir)
+        scenarios = scenarios + unity_scenarios
+        print(f"[data] +unity     : {len(unity_scenarios)}  →  total: {len(scenarios)}")
     train_sc, val_sc = split_scenarios(scenarios, val_ratio=0.2, seed=SEED)
     train_ds = FusionDataset(train_sc)
     val_ds = FusionDataset(val_sc)
@@ -291,4 +299,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--unity-dir", default=None,
+        help="Unity 가 export 한 JSON 디렉터리 (예: DangerSimulation/Assets/Output)",
+    )
+    args = parser.parse_args()
+    main(unity_dir=args.unity_dir)
