@@ -22,6 +22,15 @@ WORKER_STATE_TTL_S = 5.0
 
 
 # ── Pose 키포인트 ──────────────────────────────────────────────────────
+# 작업자가 작게 보이는 고정 CCTV 샷에서는 기본 0.25가 너무 보수적이다.
+# 낮은 confidence 후보를 살린 뒤 world 좌표 범위로 false positive를 제거한다.
+POSE_CONF_THRESHOLD = 0.01
+
+# Unity blindspot 벤치마크의 worker 통로 world 좌표 범위.
+# None 이면 위치 필터를 끈다. 현재 장면에서는 cam1 지게차 false positive를 제거하고
+# cam2의 낮은 confidence 실제 worker pose를 살리는 역할을 한다.
+WORKER_WORLD_BOUNDS = (-8.2, 0.8, 2.5, 6.8)  # x_min, x_max, y_min, y_max
+
 # YOLO11n-pose 의 발목 keypoint 인덱스 (COCO 17 keypoint 규격).
 LEFT_ANKLE = 15
 RIGHT_ANKLE = 16
@@ -33,3 +42,19 @@ KPT_CONF_THRESHOLD = 0.3
 # ── Custom 모델 클래스 ────────────────────────────────────────────────
 # fusion 의 dropzone 위치 갱신에 쓰이는 인양물 클래스 이름.
 BOX_CLASS_NAMES = ("box_1", "box_2")
+
+# DetectionPipeline 이 custom YOLO 결과에서 유지할 클래스.
+CUSTOM_OBJECT_CLASS_NAMES = ("forklift", *BOX_CLASS_NAMES)
+
+# Forklift bbox 하단 전체는 포크/그림자/가려짐에 흔들려 ground-plane 좌표가 튄다.
+# Unity 도로 시나리오 기준으로 bbox 중앙 x, 높이 75% 지점이 앞바퀴/포크 루트 기준점에 가깝다.
+FORKLIFT_REF_X_RATIO = 0.5
+FORKLIFT_REF_Y_RATIO = 0.75
+
+# ── Lifted box/dropzone 좌표 보정 ───────────────────────────────────────
+# 공중에 떠 있는 인양물은 bbox 하단점을 ground-plane homography에 넣으면
+# 바닥으로 투영되어 큰 오차가 난다. 현재 Unity 벤치마크에서는 cam1 bbox 중심을
+# Box1 중심 높이 평면에 ray-cast한 좌표가 가장 안정적이다.
+LIFTED_BOX_CLASS_NAMES = ("box_1",)
+LIFTED_BOX_PRIMARY_CAM_ID = "cam1"
+LIFTED_BOX_CENTER_UNITY_Y = 3.5

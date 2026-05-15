@@ -15,11 +15,14 @@ from .calibration_runtime import (
     ensure_calibration,
 )
 from .engine import DetectionPipeline
+from .refinement import DetectionRefiner, DetectionRefinerConfig
 from .runner import build_default_pipeline, main, run_image, run_live
 from .visualization import draw_annotated
 
 __all__ = [
     "DetectionPipeline",
+    "DetectionRefiner",
+    "DetectionRefinerConfig",
     "build_default_pipeline",
     "ensure_calibration",
     "capture_rtsp_snapshot",

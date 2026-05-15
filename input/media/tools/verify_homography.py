@@ -28,7 +28,8 @@ import cv2
 import numpy as np
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# input/media/tools 아래에 있으므로 parents[3]이 프로젝트 루트다.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CALIBRATION_DIR = PROJECT_ROOT / "calibration"
 
 ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)

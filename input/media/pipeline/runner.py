@@ -31,6 +31,7 @@ from .calibration_runtime import (
 )
 from ..calibrate_homography import run_calibration
 from .engine import DetectionPipeline
+from .refinement import DetectionRefiner
 from .visualization import draw_annotated
 
 load_dotenv(PROJECT_ROOT / ".env")
@@ -53,6 +54,7 @@ def run_image(cam_id: str, image_path: Path) -> dict:
 
     pipeline = build_default_pipeline()
     detections = pipeline.extract(frame, cam_id)
+    detections = DetectionRefiner().refine({cam_id: detections})[cam_id]
 
     payload = {
         "timestamp": datetime.now().isoformat(timespec="milliseconds"),
@@ -157,6 +159,7 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
     # 여기서 반환하는 DetectionPipeline 객체는 pose 트래킹, ArUco 검출, 발 픽셀, ID 매칭, 월드 좌표 반환
     # 즉 우리가 원하는 탐지를 모아둔 클래스! 
     pipeline = build_default_pipeline()
+    refiner = DetectionRefiner()
     try:
         while True:
             # 캠1, 캠2에서 각각 프레임 하나씩 가져오기 
@@ -209,6 +212,8 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
 
             # 한쪽만 탐지한 경우, 다른 캠에 전파 함 
             pipeline.cross_camera_propagate({"cam1": d1, "cam2": d2})
+            refined = refiner.refine({"cam1": d1, "cam2": d2})
+            d1, d2 = refined["cam1"], refined["cam2"]
 
             payload = {
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),

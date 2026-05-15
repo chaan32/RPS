@@ -39,6 +39,7 @@ import cv2
 import numpy as np
 import torch  # noqa: F401  (사이드 이펙트 — CUDA/MPS 초기화)
 
+
 # RTSP TCP 강제 (cv2가 import되기 전에 설정)
 os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS",
@@ -74,8 +75,16 @@ from .kinematics import (
     resolve_direction,
     DROPZONE_ALERT_RADIUS,
 )
+from .early_warning import (
+    MotionHistory,
+    evaluate_worker_forklift,
+)
+from .global_tracker import GlobalTrackManager
 from .pair_builder import pick_positions
 from .viz import draw_camera_overlay, render_bev
+
+# 측정용 import
+from server.utils.metrics import JsonLinesLogger
 
 
 # ── Headless 모드 감지 ─────────────────────────────────
@@ -228,9 +237,11 @@ def main():
 
     # ── 카메라 + Detection Pipeline ──
     from input.media.camera import VideoStream
-    from input.media.pipeline import build_default_pipeline, ensure_calibration
+    from input.media.pipeline import DetectionRefiner, build_default_pipeline, ensure_calibration
 
     pipeline = build_default_pipeline()
+    refiner = DetectionRefiner()
+    global_tracker = GlobalTrackManager()
 
     rtsp1 = os.getenv("CAMERA_RTSP_URL_1")
     rtsp2 = os.getenv("CAMERA_RTSP_URL_2")
@@ -285,11 +296,17 @@ def main():
 
     # forklift 위치 history (정지 여부 판정용, 5Hz 기준 약 2초 분량)
     forklift_history: deque = deque(maxlen=10)
+    forklift_motion = MotionHistory()
+    worker_motion: dict[str, MotionHistory] = {}
     forklift_last_seen = 0.0
 
     # 현재 적용 중인 dropzone (live 모드 아니면 default)
     current_dz_center = np.array(DZ_CENTER, dtype=np.float32)
     current_dz_radius = float(DZ_RADIUS)
+
+    # 메인 루프 돌아가기 직전
+    # 성능 측정 로거 만들기 (파이프 라인 단계별 latency 기록하기)
+    metrics_logger = JsonLinesLogger("metrics/pipeline.jsonl")
 
     running = True
     try:
@@ -300,18 +317,35 @@ def main():
                 continue
             last_iter = now
 
+            # time logger : 시작
+            t0 = time.perf_counter()
+
+
             ret1, f1 = cam1.read()
             ret2, f2 = (cam2.read() if cam2 else (False, None))
             d1 = pipeline.extract(f1, "cam1") if ret1 and f1 is not None else []
             d2 = pipeline.extract(f2, "cam2") if ret2 and f2 is not None else []
+            pipeline.cross_camera_propagate({"cam1": d1, "cam2": d2}, now_ts=now)
+            refined = refiner.refine({"cam1": d1, "cam2": d2})
+            d1, d2 = refined["cam1"], refined["cam2"]
 
-            workers_xy, forklift_xy, dropzone_xy = pick_positions(d1, d2)
+            # time logger : t0 ~ t1 : 카메라 읽고 욜로, 아루코 코드 
+            t1 = time.perf_counter()
+
+            raw_workers_xy, raw_forklift_xy, raw_dropzone_xy = pick_positions(d1, d2)
+            workers_xy, forklift_xy, dropzone_xy = global_tracker.update(
+                now,
+                raw_workers_xy,
+                raw_forklift_xy,
+                raw_dropzone_xy,
+            )
 
             # forklift 정지 여부 판정용 history 갱신.
             # forklift 가 1초 이상 안 보이면 history 비움 (옛 위치 + 새 위치
             # 사이의 가짜 이동거리로 잘못된 속도가 잡히는 걸 방지).
             if forklift_xy is not None:
                 forklift_history.append(forklift_xy)
+                forklift_motion.update(now, forklift_xy)
                 forklift_last_seen = now
             elif forklift_history and (now - forklift_last_seen) > 1.0:
                 forklift_history.clear()
@@ -347,6 +381,7 @@ def main():
                         )
                     kinematics[wid] = WorkerKinematics()
                 kinematics[wid].update(wxy)
+                worker_motion.setdefault(wid, MotionHistory()).update(now, wxy)
                 last_seen[wid] = now
                 trackers[wid].push(forklift_xy, wxy, audio_score, crane_active)
 
@@ -356,13 +391,34 @@ def main():
             for wid in stale:
                 trackers.pop(wid, None)
                 kinematics.pop(wid, None)
+                worker_motion.pop(wid, None)
                 last_seen.pop(wid, None)
+
+            # time logger : push/state 시간 | fU
+            t2 = time.perf_counter()
 
             # ── 워커별 risk 예측 ──
             risks_per_worker: dict[str, np.ndarray] = {}
             for wid, tr in trackers.items():
                 if tr.ready():
                     risks_per_worker[wid] = tr.predict()  # (1, 2)
+
+            early_warnings = {}
+            for wid, wxy in workers_xy.items():
+                risk = risks_per_worker.get(wid)
+                fusion_risk = float(risk[0, 0]) if risk is not None else None
+                hist = worker_motion.setdefault(wid, MotionHistory())
+                early_warnings[wid] = evaluate_worker_forklift(
+                    worker_xy=wxy,
+                    forklift_xy=forklift_xy,
+                    worker_history=hist,
+                    forklift_history=forklift_motion,
+                    fusion_risk=fusion_risk,
+                    fusion_threshold=args.threshold,
+                )
+
+            # time logger : 워커 별 risk 추론 끝 | fusion 모델 forward
+            t3 = time.perf_counter()
 
             # snapshot 용 프레임: cam1 우선, 없으면 cam2
             snapshot_frame = (
@@ -413,7 +469,36 @@ def main():
                 maybe_publish(
                     pred, args.threshold, direction, frame=snapshot_frame,
                 )
+            # time logger : mqtt publish 끝 : 
+            t4 = time.perf_counter()
 
+            # 측정 결과 기록 t0 ~ t4
+            metrics_logger.log({
+                "ts": time.time(),
+                "frame_read_extract_ms": (t1 - t0) * 1000,
+                "pick_push_ms": (t2 - t1) * 1000,
+                "fusion_predict_ms": (t3 - t2) * 1000,
+                "publish_ms": (t4 - t3) * 1000,
+                "total_ms": (t4 - t0) * 1000,
+                "n_workers": len(workers_xy),
+                "n_predictions": len(risks_per_worker),
+                "worker_tracker_outliers": sum(
+                    int((global_tracker.update_for(f"worker:{wid}") or None).outlier)
+                    for wid in workers_xy
+                    if global_tracker.update_for(f"worker:{wid}") is not None
+                ),
+                "forklift_tracker_outlier": int(
+                    (global_tracker.update_for("forklift") is not None)
+                    and global_tracker.update_for("forklift").outlier
+                ),
+            })
+            '''
+                frame_read_extract_ms	t0 → t1	카메라 read + YOLO + ArUco
+                pick_push_ms	t1 → t2	좌표 합치기 + tracker 관리
+                fusion_predict_ms	t2 → t3	Fusion 모델 forward
+                publish_ms	t3 → t4	MQTT 발행 (백그라운드 스레드 시작 시간)
+                total_ms	t0 → t4	한 프레임 전체 처리 시간
+            '''
             # 콘솔 로그 (200ms마다)
             if risks_per_worker and now - last_print >= print_period:
                 last_print = now
@@ -426,9 +511,16 @@ def main():
                     wxy = workers_xy.get(wid)
                     wstr = (f"({wxy[0]:+.2f},{wxy[1]:+.2f})"
                             if wxy else "(none)")
+                    ew = early_warnings.get(wid)
+                    ew_str = ""
+                    if ew is not None and ew.level != "safe":
+                        ttc = "--" if ew.ttc_s is None else f"{ew.ttc_s:.1f}s"
+                        ca = "--" if ew.closest_distance_m is None else f"{ew.closest_distance_m:.2f}m"
+                        label = ew.level.upper()
+                        ew_str = f"  early={label} ttc={ttc} ca={ca}"
                     print(f"  - {wid} {wstr}  "
                           f"forklift_risk={risk[0,0]:.3f}  "
-                          f"dropzone_risk={risk[0,1]:.3f}")
+                          f"dropzone_risk={risk[0,1]:.3f}{ew_str}")
                     pred = FusionPrediction.from_model_output(risk)
                     for p in pred.triggered(args.threshold):
                         print(f"      🚨 {wid} ALERT → {p.threat_type.value} "
@@ -444,6 +536,7 @@ def main():
                     threshold=args.threshold,
                     dropzone_xy=bev_dz_xy, dropzone_radius=bev_dz_r,
                     worker_headings=bev_headings,
+                    early_warnings=early_warnings,
                 )
                 cv2.imshow("Fusion BEV", bev)
 

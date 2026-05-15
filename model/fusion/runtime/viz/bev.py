@@ -16,14 +16,19 @@ from .korean_text import put_korean
 from .camera_overlay import _risk_color
 
 
+DEFAULT_VIEW_BOUNDS = ((-9.5, 3.0), (-4.5, 7.0))
+DEFAULT_ARUCO_BOUNDS = ((-5.0, 0.0), (0.0, 5.0))
+
+
 def render_bev(
     workers_xy, forklift_xy, audio_score, risks_per_worker,
     threshold=DEFAULT_THRESHOLD,
     dropzone_xy=None, dropzone_radius=None,
     worker_headings=None,                      # dict {wid: heading_radians}
-    view_bounds=((-4.0, 2.0), (-1.5, 4.5)),     # ArUco 사각형(2x3m)을 중앙에 + 주변 여백
-    aruco_bounds=((-2.0, 0.0), (0.0, 3.0)),     # 실제 ArUco 사각형 (workspace)
-    scale_px=120,
+    early_warnings=None,                       # dict {wid: EarlyWarning}
+    view_bounds=DEFAULT_VIEW_BOUNDS,
+    aruco_bounds=DEFAULT_ARUCO_BOUNDS,
+    scale_px=80,
 ):
     """확장 BEV 평면도 + 멀티 워커 risk 게이지.
 
@@ -72,11 +77,17 @@ def render_bev(
     cv2.rectangle(img, p_a1, p_a2, (80, 120, 180), 2)          # 진한 파랑 테두리
     # 라벨
     label_pt = (p_a1[0] + 5, p_a1[1] + 18)
-    cv2.putText(img, "ArUco workspace (2m x 3m)", label_pt,
+    cv2.putText(img, "ArUco calibration area (5m x 5m)", label_pt,
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (80, 120, 180), 1)
 
-    # ArUco 마커 4점 (실제 좌표 위치)
-    for (mx, my, name) in [(-2, 0, "27"), (-2, 3, "22"), (0, 0, "38"), (0, 3, "24")]:
+    # ArUco 마커 4점 (현재 Unity blindspot calibration/world_markers.json 기준)
+    marker_points = [
+        (ax_max, ay_min, "30"),
+        (ax_min, ay_min, "31"),
+        (ax_max, ay_max, "32"),
+        (ax_min, ay_max, "33"),
+    ]
+    for mx, my, name in marker_points:
         px, py = w2px(mx, my)
         cv2.circle(img, (px, py), 8, (40, 80, 160), -1)
         cv2.circle(img, (px, py), 8, (255, 255, 255), 1)
@@ -105,6 +116,12 @@ def render_bev(
                 color = _risk_color(max_r, threshold)
             else:
                 color = (0, 200, 0)
+            warning = early_warnings.get(wid) if early_warnings else None
+            if warning is not None:
+                if warning.level == "danger":
+                    color = (0, 0, 255)
+                elif warning.level == "warning":
+                    color = (0, 165, 255)
             cv2.circle(img, wpx, 13, color, -1)
             cv2.circle(img, wpx, 13, (255, 255, 255), 2)
             cv2.putText(img, wid, (wpx[0] - 22, wpx[1] - 18),
@@ -169,6 +186,27 @@ def render_bev(
             row_y += 45
             gauge("vs DropZone", d_r, row_y, _risk_color(d_r, threshold))
             row_y += 55
+            if early_warnings and wid in early_warnings:
+                ew = early_warnings[wid]
+                status_color = (
+                    (0, 0, 255) if ew.level == "danger"
+                    else (0, 140, 255) if ew.level == "warning"
+                    else (120, 120, 120)
+                )
+                level_label = (
+                    "DANGER" if ew.level == "danger"
+                    else "WARNING" if ew.level == "warning"
+                    else "SAFE"
+                )
+                cv2.putText(img, f"early: {level_label}",
+                            (panel_x + 10, row_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, status_color, 2)
+                row_y += 20
+                if ew.ttc_s is not None and ew.closest_distance_m is not None:
+                    cv2.putText(img, f"TTC {ew.ttc_s:.1f}s  CA {ew.closest_distance_m:.2f}m",
+                                (panel_x + 10, row_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (50, 50, 50), 1)
+                    row_y += 20
     else:
         cv2.putText(img, "(buffering...)", (panel_x + 10, 110),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
@@ -187,5 +225,14 @@ def render_bev(
                           (W - 25, H - 25), (0, 0, 255), -1)
             img = put_korean(img, "!! 위험 감지 !!",
                              (panel_x + 25, H - 60), 22, (255, 255, 255))
+    if early_warnings:
+        any_danger = any(ew.level == "danger" for ew in early_warnings.values())
+        any_warning = any(ew.level == "warning" for ew in early_warnings.values())
+        if any_danger or any_warning:
+            color = (0, 0, 255) if any_danger else (0, 165, 255)
+            label = "DANGER" if any_danger else "WARNING"
+            cv2.rectangle(img, (50, 20), (360, 58), color, -1)
+            cv2.putText(img, label, (62, 47),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
 
     return img

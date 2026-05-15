@@ -29,8 +29,8 @@ ARUCO_DICT = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
 ARUCO_PARAMS = cv2.aruco.DetectorParameters()
 
 
-def load_world_markers() -> dict[int, tuple[float, float]]:
-    """아루코 코드 간의 거리를 사람이 직접 기입한 걸 가져오는 것"""
+def load_marker_config() -> tuple[dict[int, tuple[float, float]], list[int], list[int]]:
+    """월드 좌표 마커, 사용 후보 ID, 필수 ID를 읽는다."""
     path = CALIBRATION_DIR / "world_markers.json"
     if not path.exists():
         raise FileNotFoundError(
@@ -38,7 +38,18 @@ def load_world_markers() -> dict[int, tuple[float, float]]:
         )
     with open(path) as f:
         data = json.load(f)
-    return {m["id"]: (m["world_x"], m["world_y"]) for m in data["markers"]}
+    world_markers = {
+        m["id"]: (m["world_x"], m["world_y"])
+        for m in data["markers"]
+    }
+    shared_ids = [int(i) for i in data.get("shared_calibration_ids", [])]
+    required_ids = [int(i) for i in data.get("required_calibration_ids", [])]
+    return world_markers, shared_ids, required_ids
+
+
+def load_world_markers() -> dict[int, tuple[float, float]]:
+    """아루코 코드 간의 거리를 사람이 직접 기입한 걸 가져오는 것"""
+    return load_marker_config()[0]
 
 
 def detect_aruco_centers(image: np.ndarray) -> dict[int, np.ndarray]:
@@ -124,7 +135,7 @@ def run_calibration(cam_id: str, image_path: Path) -> Path:
     if image is None:
         raise RuntimeError(f"이미지 로드 실패: {image_path}")
 
-    world_centers = load_world_markers()
+    world_centers, shared_ids, required_ids = load_marker_config()
     ''' world_centers는 이런 식으로 리턴 된다 
     {
     38: (0.00, 0.00),
@@ -144,6 +155,28 @@ def run_calibration(cam_id: str, image_path: Path) -> Path:
     print(f"\n[{cam_id}] 이미지: {image_path.name}")
     print(f"  월드 정의 마커: {len(world_centers)}개 (IDs: {sorted(world_centers)})")
     print(f"  감지된 마커:    {len(pixel_centers)}개 (IDs: {sorted(pixel_centers)})")
+
+    if required_ids:
+        missing_required = sorted(set(required_ids) - set(pixel_centers))
+        if missing_required:
+            raise RuntimeError(
+                f"필수 캘리브레이션 마커 {required_ids} 중 {missing_required} 미감지. "
+                f"기본 좌표계 고정을 위해 필수 마커는 모두 보여야 합니다."
+            )
+
+    calibration_ids = shared_ids or sorted(world_centers)
+    visible_calibration_ids = sorted(set(calibration_ids) & set(pixel_centers))
+    missing_optional = sorted(set(calibration_ids) - set(pixel_centers))
+    if len(visible_calibration_ids) < 4:
+        raise RuntimeError(
+            f"호모그래피에 사용할 캘리브레이션 마커가 4개 미만입니다. "
+            f"보이는 후보: {visible_calibration_ids}, 전체 후보: {calibration_ids}"
+        )
+    pixel_centers = {i: pixel_centers[i] for i in visible_calibration_ids}
+    world_centers = {i: world_centers[i] for i in visible_calibration_ids}
+    print(f"  사용 가능한 캘리브레이션 마커: {visible_calibration_ids}")
+    if missing_optional:
+        print(f"  미감지 선택 마커: {missing_optional} — 보이는 마커만 RANSAC에 사용")
 
     H, used_ids, err = compute_homography(pixel_centers, world_centers)
 

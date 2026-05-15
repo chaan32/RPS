@@ -79,6 +79,8 @@ services:
       - ./snapshots:/app/snapshots
       # 캘리브레이션 — 호스트와 공유 (재학습 / verify_homography 결과 공유용)
       - ./calibration:/app/calibration
+      # 성능 측정용
+      - ./metrics:/app/metrics 
 
   # ── React 프론트엔드 (Nginx 정적 서빙 + /api 프록시) ────────────────
   frontend:
@@ -91,14 +93,20 @@ services:
     depends_on:
       - backend
 
-  # ── Mock RTSP — 카메라 없이 시연/검증용 ──────────────────────────────
-  # `docker compose --profile mock up -d` 로만 같이 띄움 (기본 실행 시 제외).
+  # ── RTSP bridge — Unity/Mock 영상을 MediaMTX 로 중계 ───────────────
+  # Unity collision scenario 검증:
+  #   docker compose --profile mock up -d mediamtx
+  #   python input/media/tools/stream_collision_scenario_rtsp.py
+  #
+  # 오래된 파일 기반 fake publisher 까지 같이 띄우려면 별도 profile 사용:
+  #   docker compose --profile mock-file up -d
+  #
   # 띄운 뒤 .env 의 CAMERA_RTSP_URL_1/2 를 다음으로 설정:
   #   CAMERA_RTSP_URL_1=rtsp://mediamtx:8554/cam1
   #   CAMERA_RTSP_URL_2=rtsp://mediamtx:8554/cam2
   mediamtx:
     image: bluenviron/mediamtx:latest
-    profiles: ["mock"]
+    profiles: ["mock", "mock-file"]
     restart: unless-stopped
     ports:
       - "8554:8554"   # RTSP
@@ -109,7 +117,7 @@ services:
 
   ffmpeg-cam1:
     image: linuxserver/ffmpeg:latest
-    profiles: ["mock"]
+    profiles: ["mock-file"]
     restart: unless-stopped
     depends_on:
       - mediamtx
@@ -139,7 +147,7 @@ services:
 
   ffmpeg-cam2:
     image: linuxserver/ffmpeg:latest
-    profiles: ["mock"]
+    profiles: ["mock-file"]
     restart: unless-stopped
     depends_on:
       - mediamtx

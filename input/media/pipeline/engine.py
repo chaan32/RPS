@@ -19,14 +19,22 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
+from ..camera_geometry import pixel_to_world_on_unity_y_plane
 from ..world_mapper import pixel_to_world
 from .constants import (
-    BOX_CLASS_NAMES,
+    CUSTOM_OBJECT_CLASS_NAMES,
+    FORKLIFT_REF_X_RATIO,
+    FORKLIFT_REF_Y_RATIO,
     KPT_CONF_THRESHOLD,
     LEFT_ANKLE,
+    LIFTED_BOX_CENTER_UNITY_Y,
+    LIFTED_BOX_CLASS_NAMES,
+    LIFTED_BOX_PRIMARY_CAM_ID,
+    POSE_CONF_THRESHOLD,
     RIGHT_ANKLE,
     WORKER_ARUCO_MAP,
     WORKER_STATE_TTL_S,
+    WORKER_WORLD_BOUNDS,
     WORLD_MATCH_RADIUS_M,
 )
 
@@ -109,7 +117,7 @@ class DetectionPipeline:
         # ── (a) 사람 포즈 트래킹 ──
         # 양 발목(15,16) 중점을 발 픽셀로 사용 (bbox 중심보다 카메라 각도에 robust).
         pose_results = self.pose_model.track(
-            frame, conf=0.25, persist=True, verbose=False, classes=[0],
+            frame, conf=POSE_CONF_THRESHOLD, persist=True, verbose=False, classes=[0],
         )
 
         # ── (a-1) 작업자 ArUco ──
@@ -164,11 +172,16 @@ class DetectionPipeline:
 
         boxes = pose_results[0].boxes
         xyxy = boxes.xyxy.cpu().numpy()
+        conf_arr = (
+            boxes.conf.cpu().numpy().tolist()
+            if boxes.conf is not None else [None] * len(xyxy)
+        )
         ids_t = boxes.id
         ids_arr = (
             ids_t.cpu().numpy().astype(int).tolist()
             if ids_t is not None else [None] * len(xyxy)
         )
+        orig_h, orig_w = pose_results[0].orig_shape
 
         kpts_xy = None
         kpts_conf = None
@@ -177,20 +190,31 @@ class DetectionPipeline:
             if pose_results[0].keypoints.conf is not None:
                 kpts_conf = pose_results[0].keypoints.conf.cpu().numpy()
 
-        for i, (box, tid) in enumerate(zip(xyxy, ids_arr)):
+        for i, (box, tid, conf) in enumerate(zip(xyxy, ids_arr, conf_arr)):
             x1, y1, x2, y2 = [float(v) for v in box]
 
             foot_x, foot_y, foot_source = self._pick_foot_point(
                 x1, y1, x2, y2, kpts_xy, kpts_conf, i,
             )
             wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
+            if WORKER_WORLD_BOUNDS is not None:
+                min_x, max_x, min_y, max_y = WORKER_WORLD_BOUNDS
+                if not (min_x <= wx <= max_x and min_y <= wy <= max_y):
+                    continue
+
+            bbox_area_ratio = (
+                max(0.0, x2 - x1) * max(0.0, y2 - y1)
+                / float(orig_w * orig_h)
+            )
 
             entries.append({
                 "type": "worker",
                 "worker_id": None,
                 "track_id": tid,
                 "id_source": None,
+                "confidence": round(float(conf), 4) if conf is not None else None,
                 "bbox_px": [x1, y1, x2, y2],
+                "bbox_area_ratio": round(bbox_area_ratio, 4),
                 "foot_px": [float(foot_x), float(foot_y)],
                 "foot_source": foot_source,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
@@ -268,37 +292,64 @@ class DetectionPipeline:
                     f"(가장 가까운 bbox 가 거리 임계 초과 또는 bbox 0개)"
                 )
 
-    # ── 내부: custom_model 검출 (forklift, box_1, box_2) ──
+    # ── 내부: custom_model 검출 (forklift / box_1 / box_2) ──
     def _extract_custom_objects(self, frame, cam_id: str) -> list[dict]:
         out: list[dict] = []
         if self.custom_model is None:
             return out
 
         results = self.custom_model(frame, conf=0.5, verbose=False)
+        frame_h, frame_w = frame.shape[:2]
         for box in results[0].boxes:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
             cls_id = int(box.cls[0])
             cls_name = self.custom_names.get(cls_id, f"cls_{cls_id}")
+            conf = float(box.conf[0]) if box.conf is not None else None
 
-            if cls_name in BOX_CLASS_NAMES:
-                # 공중 인양물: 밑면 중심 (지면 projection 오차 최소화)
-                ref_x, ref_y = (x1 + x2) / 2, y2
-                ref_source = "bbox_bottom_center_airborne"
-            elif cls_name == "forklift":
-                # 지면 객체: 밑면 중심
-                ref_x, ref_y = (x1 + x2) / 2, y2
-                ref_source = "bbox_bottom_center"
-            else:
+            if cls_name not in CUSTOM_OBJECT_CLASS_NAMES:
+                continue
+
+            ref_x, ref_y = (x1 + x2) / 2, y2
+            ref_source = "bbox_bottom_center"
+            coord_source = "homography_ground"
+            dropzone_usable = cls_name not in LIFTED_BOX_CLASS_NAMES
+            bbox_area_ratio = max(0.0, (x2 - x1)) * max(0.0, (y2 - y1)) / float(frame_w * frame_h)
+
+            if cls_name == "forklift":
+                ref_x = x1 + (x2 - x1) * FORKLIFT_REF_X_RATIO
+                ref_y = y1 + (y2 - y1) * FORKLIFT_REF_Y_RATIO
+                ref_source = "forklift_front_axle"
+                wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
+            elif cls_name in LIFTED_BOX_CLASS_NAMES and cam_id == LIFTED_BOX_PRIMARY_CAM_ID:
                 ref_x, ref_y = (x1 + x2) / 2, (y1 + y2) / 2
-                ref_source = "bbox_center"
-
-            wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
+                ray_world = pixel_to_world_on_unity_y_plane(
+                    cam_id=cam_id,
+                    px=ref_x,
+                    py=ref_y,
+                    unity_y=LIFTED_BOX_CENTER_UNITY_Y,
+                    image_width=frame_w,
+                    image_height=frame_h,
+                )
+                if ray_world is not None:
+                    wx, wy = ray_world
+                    ref_source = "bbox_center"
+                    coord_source = f"ray_unity_y_{LIFTED_BOX_CENTER_UNITY_Y:g}"
+                    dropzone_usable = True
+                else:
+                    wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
+            else:
+                wx, wy = pixel_to_world(ref_x, ref_y, cam_id)
             out.append({
                 "type": cls_name,
                 "track_id": None,
+                "confidence": round(conf, 4) if conf is not None else None,
                 "bbox_px": [x1, y1, x2, y2],
+                "bbox_area_ratio": round(bbox_area_ratio, 4),
+                "image_size": [frame_w, frame_h],
                 "foot_px": [ref_x, ref_y],
                 "ref_source": ref_source,
+                "coord_source": coord_source,
+                "dropzone_usable": dropzone_usable,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
         return out

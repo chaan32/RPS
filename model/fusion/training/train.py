@@ -302,7 +302,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--unity-dir", default=None,
-        help="Unity 가 export 한 JSON 디렉터리 (예: DangerSimulation/Assets/Output)",
+        help="Unity 가 export 한 JSON 디렉터리 (예: simulation/Assets/Output)",
     )
     args = parser.parse_args()
     main(unity_dir=args.unity_dir)

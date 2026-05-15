@@ -39,11 +39,16 @@ async def lifespan(app: FastAPI):
     # model.fusion.runtime.realtime_camera 는 캘리브레이션 자동 보장 + YOLO + ArUco +
     # Fusion 모델 추론 + MQTT/DB 발행까지 한 번에 처리.
     # cwd 를 PROJECT_ROOT 로 두어 sys.path 자동 포함.
+    #
+    # RTSP bridge / 성능평가처럼 realtime process 를 명시적으로 따로 실행할 때는
+    # DISABLE_FUSION_SUBPROCESS=1 로 서버 API/DB/MQTT 만 켠다.
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    cam_proc = subprocess.Popen(
-        [sys.executable, "-m", "model.fusion.runtime.realtime_camera", "--no-prompt"],
-        cwd=project_root,
-    )
+    cam_proc = None
+    if os.getenv("DISABLE_FUSION_SUBPROCESS", "").lower() not in ("1", "true", "yes"):
+        cam_proc = subprocess.Popen(
+            [sys.executable, "-m", "model.fusion.runtime.realtime_camera", "--no-prompt"],
+            cwd=project_root,
+        )
 
     # 4) MQTT 파이프라인 (백그라운드 producer/consumer)
     queue: asyncio.Queue = asyncio.Queue()
@@ -57,4 +62,5 @@ async def lifespan(app: FastAPI):
         # 종료 시 정리
         producer_task.cancel()
         consumer_task.cancel()
-        cam_proc.terminate()
+        if cam_proc is not None:
+            cam_proc.terminate()

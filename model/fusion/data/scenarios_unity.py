@@ -1,6 +1,6 @@
 """Unity 가 export 한 JSON 시나리오들을 Scenario 객체 리스트로 로드.
 
-Unity 측 (DangerSimulation/Assets/Scripts/) 의 BatchScenarioGenerator 가
+Unity 측 (simulation/Assets/Scripts/) 의 BatchScenarioGenerator 가
 Assets/Output/*.json 으로 떨어뜨린 파일들을 학습 파이프라인에서 사용할 수 있는
 Scenario 형식으로 변환한다.
 
@@ -101,7 +101,7 @@ def _sanity_check():
     """Assets/Output 의 JSON 들 로드 + 기본 통계 출력."""
     import sys
     project_root = Path(__file__).resolve().parent.parent.parent.parent
-    default_dir = project_root / "DangerSimulation" / "Assets" / "Output"
+    default_dir = project_root / "simulation" / "Assets" / "Output"
     target = Path(sys.argv[1]) if len(sys.argv) > 1 else default_dir
 
     scenarios = load_unity_scenarios(target)
