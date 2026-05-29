@@ -1,4 +1,4 @@
-# RPS: Multi-View Risk Prediction System
+# RPS: Risk Prediction System Based by Multi-View
 
 Unity 기반 공장 사각지대 시뮬레이션에서 cam1 / cam2 영상을 생성하고, RTSP 입력처럼 백엔드에 주입한 뒤 작업자, 지게차, 인양물 DropZone의 절대좌표를 계산해 충돌 위험을 예측하는 AI 안전 모니터링 시스템입니다.
 
