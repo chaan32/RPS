@@ -1,8 +1,7 @@
-"""FastAPI 앱 진입점 — 라우터 등록 + lifespan 설정만 (얇게).
+"""FastAPI 애플리케이션 진입점.
 
-도메인별 라우터: server/api/
-비즈니스 로직: server/service/
-앱 생명주기: server/lifespan.py
+이 파일은 전역 미들웨어, CORS, API 라우터, lifespan 연결만 담당한다.
+도메인별 비즈니스 로직은 server/service/ 하위 모듈에 둔다.
 """
 
 import os
@@ -29,7 +28,7 @@ request_metrics_logger = JsonLinesLogger(
 
 @app.middleware("http")
 async def log_request_metrics(request, call_next):
-    """Record per-request latency for Mac/Docker benchmark comparison."""
+    """요청별 응답 시간을 JSONL로 기록하고 Server-Timing 헤더에 노출한다."""
     started = time.perf_counter()
     request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
     status_code = 500
@@ -53,7 +52,7 @@ async def log_request_metrics(request, call_next):
                 "duration_ms": duration_ms,
             })
 
-# ── CORS ──────────────────────────────────────────────────────────────
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -62,11 +61,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 라우터 등록 ────────────────────────────────────────────────────────
-# ESP32-S3-WROOM-1 오디오 입력 WebSocket  (/ws/audio)
+# 라우터 등록
+# ESP32 오디오 WebSocket 입력. 현재 Fusion V2에서는 선택 입력으로 남겨둔다.
 app.include_router(esp32_audio_router)
 
-# 도메인별 REST API
+# 도메인별 REST API. /makers는 기존 프론트/DB 호환용 alias다.
 app.include_router(health.router)
 app.include_router(audio.router)
 app.include_router(alerts.router)

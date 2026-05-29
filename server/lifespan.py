@@ -1,4 +1,8 @@
-"""FastAPI lifespan — 앱 시작/종료 시 실행할 것들 (DB init, MQTT, fusion subprocess)."""
+"""FastAPI lifespan 관리.
+
+서버 시작 시 DB 스키마 보정, 기본 worker seed, 선택적 Fusion subprocess,
+MQTT/Redis 백그라운드 태스크를 준비하고 종료 시 정리한다.
+"""
 
 import asyncio
 import os
@@ -15,15 +19,18 @@ from .pipeline import MQTTHandler
 
 
 async def mqtt_consumer(queue: asyncio.Queue):
-    """MQTT 로 들어온 메시지를 큐에서 꺼내 처리 (현재는 로깅만)."""
+    """MQTT 수신 메시지를 내부 큐에서 꺼내 확인한다.
+
+    현재 위험 알림 저장은 realtime_camera의 DB 로거가 담당하므로 이 consumer는
+    연결 상태 확인용으로만 유지한다.
+    """
     while True:
         data = await queue.get()
-        print(f"🛠  Consumer got: {data}")
-        # TODO: 필요 시 DB 저장 등 추가 처리
+        print(f"[mqtt] consumer got: {data}")
 
 
 async def _migrate_worker_schema(conn) -> None:
-    """Rename old maker schema to worker schema and keep only worker ids 1,2."""
+    """기존 maker 스키마를 worker 스키마로 맞춘다."""
     await conn.execute(text("""
         DO $$
         BEGIN
@@ -52,7 +59,7 @@ async def _migrate_worker_schema(conn) -> None:
 
 
 async def _normalize_workers(conn) -> None:
-    """Seed workers 1/2 and map legacy incident rows to those workers."""
+    """worker 1/2를 보장하고 legacy incident row를 1/2로 정규화한다."""
     await conn.execute(text("""
         INSERT INTO workers (id, count)
         VALUES (1, 0), (2, 0)
@@ -83,8 +90,8 @@ async def _normalize_workers(conn) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """서버 시작 시 (yield 전) / 종료 시 (yield 후) 실행할 작업 정의."""
-    # 1) DB 테이블 자동 생성 (없을 때만)
+    """서버 시작 전후에 필요한 백그라운드 리소스를 준비하고 정리한다."""
+    # DB 스키마 보정 및 테이블 자동 생성
     async with engine.begin() as conn:
         await _migrate_worker_schema(conn)
         await conn.run_sync(Base.metadata.create_all)
@@ -105,14 +112,14 @@ async def lifespan(app: FastAPI):
             )
         """))
 
-    # 2) Worker 1~2 시드 (없을 때만)
+    # Worker 1~2 seed
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Worker))
         if not result.scalars().first():
             session.add_all([Worker(id=i, count=0) for i in range(1, 3)])
             await session.commit()
 
-    # 3) Fusion 추론 subprocess 기동
+    # Fusion 추론 subprocess 기동
     # model.fusion.runtime.realtime_camera 는 캘리브레이션 자동 보장 + YOLO + ArUco +
     # Fusion 모델 추론 + MQTT/DB 발행까지 한 번에 처리.
     # cwd 를 PROJECT_ROOT 로 두어 sys.path 자동 포함.
@@ -127,7 +134,7 @@ async def lifespan(app: FastAPI):
             cwd=project_root,
         )
 
-    # 4) MQTT 파이프라인 (백그라운드 producer/consumer)
+    # MQTT/Redis 백그라운드 태스크
     queue: asyncio.Queue = asyncio.Queue()
     handler = MQTTHandler(queue)
     producer_task = asyncio.create_task(handler.run())

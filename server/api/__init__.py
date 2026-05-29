@@ -1,10 +1,4 @@
-"""REST API 라우터 (Spring 의 @RestController 에 해당).
+"""FastAPI REST 라우터 패키지.
 
-사용:
-    from .api import (
-        health, audio, alerts, workers, makers,
-        images, incidents, reports, aruco,
-    )
-    app.include_router(health.router)
-    ...
+각 모듈은 하나의 도메인별 APIRouter를 제공하고, server/main.py에서 등록한다.
 """

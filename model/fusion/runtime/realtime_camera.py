@@ -1,24 +1,16 @@
-"""실시간 카메라 + YAMnet → Fusion 모델 통합 검증.
+"""RTSP 멀티뷰 영상 기반 실시간 위험 예측 runtime.
 
 데이터 흐름:
-  [Cam1 (RTSP)] ──► YOLO+ArUco+homography ──► world coords (worker, forklift)
-  [Cam2 (RTSP)] ─┘                                   │
-                                                      ▼
-  [ESP32 마이크 → /ws/audio → 서버 YAMnet] ──► /audio/score HTTP 폴링 ──► audio_score
-                                                      │
-                                                      ▼
-                                          RealtimeInference.push(...)
-                                                      │
-                                                      ▼
-                                          risk_matrix (1, 2)
-                                                      │
-                                                      ▼
-                                          BEV 시각화 + 콘솔 알림
+  Cam1/Cam2 RTSP
+    -> YOLO-Pose / custom YOLO / ArUco Homography
+    -> worker, forklift, dropzone BEV 좌표
+    -> Fusion V1 규칙 기반 또는 Fusion V2 GRU 기반 위험 판단
+    -> 콘솔/BEV 시각화, DB snapshot 저장, MQTT 알림
 
 실행:
   conda activate venv
-  python model/fusion/realtime_camera.py            # ESP32 audio + 라이브 카메라
-  python model/fusion/realtime_camera.py --no-audio # audio=0.05 고정 (오디오 무시)
+  python -m model.fusion.runtime.realtime_camera --no-audio
+  python -m model.fusion.runtime.realtime_camera --risk-engine v2 --no-audio
 
 ESC: 종료
 """
@@ -37,26 +29,25 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import torch  # noqa: F401  (사이드 이펙트 — CUDA/MPS 초기화)
+import torch  # noqa: F401  (MPS/CUDA 런타임 초기화 목적)
 
 
-# RTSP TCP 강제 (cv2가 import되기 전에 설정)
+# RTSP 프레임 지연을 줄이기 위해 OpenCV/FFmpeg 옵션을 import 직후 설정한다.
 os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS",
     "rtsp_transport;tcp|fflags;nobuffer|analyzeduration;0|probesize;32",
 )
 
-# 프로젝트 경로 (이 파일: model/fusion/runtime/realtime_camera.py → 4단계 위가 PROJECT_ROOT)
+# 이 파일 기준 4단계 상위가 프로젝트 루트다.
 _HERE = Path(__file__).resolve()
 PROJECT_ROOT = _HERE.parent.parent.parent.parent
-# `python -m model.fusion.runtime.realtime_camera` 로 실행하면 sys.path 자동 처리되지만,
-# 직접 실행이나 subprocess 환경 안전망으로 PROJECT_ROOT 만 명시 추가.
+# 직접 실행이나 subprocess 환경에서도 절대 import가 동작하도록 루트를 추가한다.
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 load_dotenv(PROJECT_ROOT / ".env")
 
-# Fusion 모듈
+# Fusion 추론 모듈
 from ..inference import (
     load_dual_model,
     RealtimeInference,
@@ -67,7 +58,7 @@ from ..data.scenario_generator import DZ_CENTER, DZ_RADIUS, RATE
 from .publisher import publish_alert_via_server_sync
 from .db_logger import log_pair_sync, log_pair_with_snapshot_sync
 
-# 분리된 서브모듈
+# runtime 서브모듈
 from . import audio_thread
 from .kinematics import (
     WorkerKinematics,
@@ -84,22 +75,19 @@ from .global_tracker import GlobalTrackManager
 from .pair_builder import pick_positions
 from .viz import draw_camera_overlay, render_bev
 
-# 측정용 import
+# 성능 측정 유틸
 from server.utils.metrics import JsonLinesLogger
 from server.utils.perf import add_camera_timings, add_duration_ms
 
 
-# ── Headless 모드 감지 ─────────────────────────────────
-# Docker 컨테이너처럼 디스플레이 서버가 없는 환경에선 cv2.imshow 가 Qt 로드 실패로
-# 죽으므로, render_bev / draw_camera_overlay / imshow / waitKey 를 모두 skip.
-# Dockerfile 의 QT_QPA_PLATFORM=offscreen 이 자동 트리거.
+# 디스플레이 서버가 없는 환경에서는 OpenCV GUI 호출을 모두 건너뛴다.
 HEADLESS = (
     os.environ.get("QT_QPA_PLATFORM") == "offscreen"
     or os.environ.get("HEADLESS", "").lower() in ("1", "true", "yes")
 )
 
 
-# ── 메인 루프 정책 상수 ────────────────────────────────
+# 메인 루프 정책 상수
 DZ_SMOOTHING_FRAMES = 5         # 인양물 BEV 좌표 시간 평활화 (median filter)
 MAX_WORKERS = 3                 # 동시 추적 가능한 작업자 수
 
@@ -125,7 +113,7 @@ def _count_detection_types(detections: list[dict]) -> dict[str, int]:
     return counts
 
 
-# ── MQTT 발행 cooldown / fire-and-forget ───────────────
+# MQTT 발행 cooldown / fire-and-forget
 ALERT_COOLDOWN_SEC = 2.0
 _last_publish_ts: dict[tuple[str, ThreatType], float] = {}
 
@@ -493,7 +481,7 @@ def main():
                 for tr in trackers.values():
                     tr.update_dropzone(center=smoothed_dz)
 
-            crane_active = 0  # TODO: MQTT crane state
+            crane_active = 0  # V1 호환 기본값. 별도 crane MQTT 상태 연동 시 교체한다.
             t_motion_audio = time.perf_counter()
 
             # ── 멀티 워커: 각 worker_id 별 tracker/kinematics 갱신 + push ──

@@ -336,7 +336,6 @@ export default function DailyAdminDashboard() {
         );
         console.group('[Pobiga] report generation timing');
         console.table(timing);
-        console.log('server metric request_id:', timing.requestId);
         console.groupEnd();
       });
     });
