@@ -65,3 +65,5 @@ benchmark/file/fusion_v2/*.npz
 __pycache__/
 .pytest_cache/
 .pio/
+
+ROADMAP.md
