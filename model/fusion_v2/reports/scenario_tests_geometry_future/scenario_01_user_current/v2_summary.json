@@ -1,0 +1,76 @@
+{
+  "windows": 188,
+  "workers": [
+    "W01",
+    "W02"
+  ],
+  "forklift": {
+    "class_accuracy": 0.9787234042553191,
+    "danger_accuracy": 0.9840425531914894,
+    "danger_precision": 0.8235294117647058,
+    "danger_recall": 1.0,
+    "danger_f1": 0.9032258064516129,
+    "support_danger": 14,
+    "predicted_danger": 17
+  },
+  "dropzone": {
+    "class_accuracy": 1.0,
+    "danger_accuracy": 1.0,
+    "danger_precision": 0.0,
+    "danger_recall": 0.0,
+    "danger_f1": 0.0,
+    "support_danger": 0,
+    "predicted_danger": 0
+  },
+  "first_events": {
+    "W01": {
+      "forklift": {
+        "v1_warning_frame": 111,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.5,
+        "reference_max": 0.0,
+        "v2_max": 8.968215843196958e-05
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "reference_max": 0.0,
+        "v2_max": 3.6642370105255395e-05
+      }
+    },
+    "W02": {
+      "forklift": {
+        "v1_warning_frame": 40,
+        "reference_warning_frame": 97,
+        "v2_warning_frame": 96,
+        "v1_danger_frame": 111,
+        "reference_danger_frame": 105,
+        "v2_danger_frame": 102,
+        "v1_max": 1.0,
+        "reference_max": 1.0,
+        "v2_max": 0.9999961853027344
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "reference_max": 0.0,
+        "v2_max": 0.0001394680148223415
+      }
+    }
+  },
+  "video_path": "model/fusion_v2/reports/scenario_tests_geometry_future/scenario_01_user_current/scenario_01_user_current_v2_test.mp4"
+}

@@ -1,0 +1,76 @@
+{
+  "windows": 194,
+  "workers": [
+    "W01",
+    "W02"
+  ],
+  "forklift": {
+    "class_accuracy": 0.9742268041237113,
+    "danger_accuracy": 0.9742268041237113,
+    "danger_precision": 0.8,
+    "danger_recall": 0.8571428571428571,
+    "danger_f1": 0.8275862068965518,
+    "support_danger": 14,
+    "predicted_danger": 15
+  },
+  "dropzone": {
+    "class_accuracy": 1.0,
+    "danger_accuracy": 1.0,
+    "danger_precision": 0.0,
+    "danger_recall": 0.0,
+    "danger_f1": 0.0,
+    "support_danger": 0,
+    "predicted_danger": 0
+  },
+  "first_events": {
+    "W01": {
+      "forklift": {
+        "v1_warning_frame": 111,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.5,
+        "reference_max": 0.0,
+        "v2_max": 7.463312795152888e-05
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "reference_max": 0.0,
+        "v2_max": 3.0353572583408095e-05
+      }
+    },
+    "W02": {
+      "forklift": {
+        "v1_warning_frame": 32,
+        "reference_warning_frame": 84,
+        "v2_warning_frame": 84,
+        "v1_danger_frame": 84,
+        "reference_danger_frame": 99,
+        "v2_danger_frame": 96,
+        "v1_max": 1.0,
+        "reference_max": 1.0,
+        "v2_max": 0.9999951124191284
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "reference_max": 0.0,
+        "v2_max": 2.3981574486242607e-05
+      }
+    }
+  },
+  "video_path": "model/fusion_v2/reports/scenario_tests_geometry_future/scenario_03_opposite_worker/scenario_03_opposite_worker_v2_test.mp4"
+}

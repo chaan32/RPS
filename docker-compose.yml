@@ -41,6 +41,26 @@ services:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
 
+  # ── Redis — 짧은 background job queue / job status 저장소 ───────────
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+
+  # ── Elasticsearch — 대량 로그 검색용 read model ────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
   # ── FastAPI 백엔드 + Fusion subprocess ─────────────────────────────
   backend:
     build:
@@ -58,10 +78,17 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_started
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_started
     environment:
       # DB / MQTT 는 compose 내부 service name 으로 해석
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-haechan}:${POSTGRES_PASSWORD:-haechan8864}@postgres:5432/${POSTGRES_DB:-pobiga_db}
       MQTT_BROKER: mosquitto
+      REDIS_URL: redis://redis:6379/0
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_INCIDENT_INDEX: incident_logs_v1
       SERVER_PORT: 1122
       # 카메라 / LLM / 모델 경로 — .env 에서 그대로 주입
       CAMERA_RTSP_URL_1: ${CAMERA_RTSP_URL_1}
@@ -180,3 +207,4 @@ volumes:
   postgres_data:
   mosquitto_data:
   mosquitto_log:
+  elasticsearch_data:

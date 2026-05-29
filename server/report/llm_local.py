@@ -14,15 +14,12 @@ from .prompts import SYSTEM_PROMPT, build_user_message, strip_code_fence
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "qwen3:8b")
-
-
 async def summarize_logs_to_html(date_str: str, logs: list[dict]) -> str:
     """Ollama /api/chat 엔드포인트를 호출하여 HTML 리포트를 생성한다."""
     
-    model = LOCAL_LLM_MODEL
-    url = f"{OLLAMA_HOST}/api/chat"
+    ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    model = os.getenv("LOCAL_LLM_MODEL", "qwen3:8b")
+    url = f"{ollama_host}/api/chat"
     print(f"요청을 해봄 :{url}")
     user_message = build_user_message(date_str, logs)
 
@@ -37,6 +34,10 @@ async def summarize_logs_to_html(date_str: str, logs: list[dict]) -> str:
             {"role": "user", "content": user_message},
         ],
         "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "top_p": 0.8,
+        },
     }
 
     logger.info("Ollama 호출 시작 — 모델: %s, 로그 건수: %d", model, len(logs))
@@ -48,7 +49,7 @@ async def summarize_logs_to_html(date_str: str, logs: list[dict]) -> str:
             resp.raise_for_status()
     except httpx.ConnectError:
         raise RuntimeError(
-            f"Ollama 서버에 연결할 수 없습니다 ({OLLAMA_HOST}). "
+            f"Ollama 서버에 연결할 수 없습니다 ({ollama_host}). "
             "ollama serve 가 실행 중인지 확인하세요."
         )
     except httpx.TimeoutException:

@@ -13,7 +13,7 @@ import random
 from datetime import datetime, timedelta, timezone, date as date_cls
 
 from sqlalchemy import select
-from ..database import AsyncSessionLocal, IncidentLog, Maker
+from ..database import AsyncSessionLocal, IncidentLog, Worker
 
 
 KST = timezone(timedelta(hours=9))
@@ -31,16 +31,16 @@ def _random_dt_on(target: date_cls) -> datetime:
 
 async def seed(target: date_cls, count: int):
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Maker.id))
-        maker_ids = [row[0] for row in result.all()]
-        if not maker_ids:
-            raise RuntimeError("Makers가 없습니다. 서버를 한 번 실행해 시드해주세요.")
+        result = await session.execute(select(Worker.id))
+        worker_ids = [row[0] for row in result.all()]
+        if not worker_ids:
+            raise RuntimeError("Workers가 없습니다. 서버를 한 번 실행해 시드해주세요.")
 
         logs = []
         for _ in range(count):
             logs.append(
                 IncidentLog(
-                    maker_id=random.choice(maker_ids),
+                    worker_id=random.choice(worker_ids),
                     incident_type=random.choices(INCIDENT_TYPES, weights=[7, 3])[0],
                     snapshot_path=f"https://s3.example.com/snapshots/{random.randint(1000, 9999)}.jpg",
                     status=random.choices(STATUSES, weights=[9, 1])[0],

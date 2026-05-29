@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import time
+from copy import deepcopy
 from pathlib import Path
 
 import cv2
@@ -42,6 +43,50 @@ from .constants import (
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
+def _parse_worker_world_bounds(
+    value: str | None,
+) -> tuple[float, float, float, float] | None:
+    """Parse worker world-bounds override from env.
+
+    The original Unity benchmark used a hard-coded worker lane. New scenes can
+    put workers outside that lane, so diagnostics/runtime can disable the filter
+    with WORKER_WORLD_BOUNDS=none or replace it with x_min,x_max,y_min,y_max.
+    """
+    if value is None or value.strip() == "":
+        return WORKER_WORLD_BOUNDS
+
+    normalized = value.strip().lower()
+    if normalized in {"none", "off", "false", "0"}:
+        return None
+
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            "WORKER_WORLD_BOUNDS must be 'none' or 'x_min,x_max,y_min,y_max'"
+        )
+    try:
+        min_x, max_x, min_y, max_y = (float(part) for part in parts)
+    except ValueError as exc:
+        raise ValueError(
+            "WORKER_WORLD_BOUNDS values must be numeric: x_min,x_max,y_min,y_max"
+        ) from exc
+    return min_x, max_x, min_y, max_y
+
+
+def _parse_positive_int_env(name: str, default: int) -> int:
+    """Parse a positive integer environment setting for YOLO image size."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 class DetectionPipeline:
     """프레임 → detection list 엔진.
 
@@ -62,13 +107,15 @@ class DetectionPipeline:
         world_match_radius_m: float = WORLD_MATCH_RADIUS_M,
         worker_state_ttl_s: float = WORKER_STATE_TTL_S,
         debug_aruco: bool = False,
+        load_pose: bool = True,
+        load_custom: bool = True,
     ):
         # ── 모델 로드 ──
-        self.pose_model = YOLO(pose_model_path)
+        self.pose_model = YOLO(pose_model_path) if load_pose else None
 
         self.custom_model = None
         self.custom_names: dict[int, str] = {}
-        if custom_model_path:
+        if custom_model_path and load_custom:
             path = custom_model_path
             if not os.path.isabs(path):
                 path = str(PROJECT_ROOT / path)
@@ -90,12 +137,37 @@ class DetectionPipeline:
         self.world_match_radius = world_match_radius_m
         self.worker_state_ttl = worker_state_ttl_s
         self.debug_aruco = debug_aruco
+        self.worker_world_bounds = _parse_worker_world_bounds(
+            os.getenv("WORKER_WORLD_BOUNDS")
+        )
+        default_imgsz = _parse_positive_int_env("YOLO_IMGSZ", 640)
+        self.pose_imgsz = _parse_positive_int_env("POSE_IMGSZ", default_imgsz)
+        self.custom_imgsz = _parse_positive_int_env("CUSTOM_IMGSZ", default_imgsz)
+        self.pose_every_n_frames = _parse_positive_int_env("POSE_EVERY_N_FRAMES", 1)
+        self.pose_skip_max_extrapolate_s = float(
+            os.getenv("POSE_SKIP_MAX_EXTRAPOLATE_S", "0.5")
+        )
 
         # ── State (인스턴스 캡슐화) ──
         # {cam_id: {track_id: worker_id}}
         self.cam_track_to_worker: dict[str, dict[int, str]] = {}
         # {worker_id: {"world": (x, y), "ts": float, "by_cam": str}}
         self.worker_world_state: dict[str, dict] = {}
+        # {cam_id: frame sequence}. Used only when pose inference is skipped.
+        self.pose_frame_seq_by_cam: dict[str, int] = {}
+        # {cam_id: {"current": entries, "previous": entries, "ts": perf_counter}}
+        self.pose_cache_by_cam: dict[str, dict] = {}
+        # {cam_id: {stage_name: milliseconds_or_count}}
+        # realtime benchmark code reads this after each extract() call.
+        self.last_timings_by_cam: dict[str, dict[str, float | int | str]] = {}
+
+    @staticmethod
+    def _elapsed_ms(start: float) -> float:
+        return (time.perf_counter() - start) * 1000.0
+
+    def get_last_timing(self, cam_id: str) -> dict[str, float | int | str]:
+        """Return the most recent per-stage timing captured by extract()."""
+        return dict(self.last_timings_by_cam.get(cam_id, {}))
 
     # ── ArUco detector 빌드 (작은 마커 감지 강화) ──
     @staticmethod
@@ -112,16 +184,84 @@ class DetectionPipeline:
     # ── 메인 API: 1프레임 → detection list ──
     def extract(self, frame, cam_id: str) -> list[dict]:
         """프레임 → YOLO + ArUco + worker ID 매칭 + 월드 좌표 변환."""
-        detections: list[dict] = []
+        extract_started = time.perf_counter()
+        worker_entries, timing = self.extract_workers(frame, cam_id)
+        custom_entries, custom_timing = self.extract_custom(frame, cam_id)
+        for key, value in custom_timing.items():
+            if key != "cam_id":
+                timing[key] = value
 
+        detections = worker_entries + custom_entries
+        timing["detections_total"] = len(detections)
+        timing["extract_total_ms"] = self._elapsed_ms(extract_started)
+        self.last_timings_by_cam[cam_id] = timing
+        return detections
+
+    def extract_workers(
+        self,
+        frame,
+        cam_id: str,
+    ) -> tuple[list[dict], dict[str, float | int | str]]:
+        """Worker pose + worker ArUco만 추출한다.
+
+        4-thread benchmark에서는 custom YOLO와 독립적으로 이 메서드를 실행한다.
+        """
+        if self.pose_model is None:
+            return [], {
+                "cam_id": cam_id,
+                "pose_model_enabled": 0,
+                "pose_track_ms": 0.0,
+                "aruco_detect_ms": 0.0,
+                "worker_collect_ms": 0.0,
+                "worker_entries": 0,
+            }
+
+        timing: dict[str, float | int | str] = {
+            "cam_id": cam_id,
+            "pose_model_enabled": 1,
+            "pose_imgsz": self.pose_imgsz,
+            "pose_every_n_frames": self.pose_every_n_frames,
+        }
+        should_run_pose, pose_sequence = self._should_run_pose(cam_id)
+        timing["pose_sequence"] = pose_sequence
+        if not should_run_pose:
+            stage_started = time.perf_counter()
+            worker_entries, cache_age_s = self._predict_cached_worker_entries(
+                cam_id,
+                now_perf=stage_started,
+            )
+            timing.update({
+                "pose_inference_skipped": 1,
+                "pose_cache_age_ms": round(cache_age_s * 1000.0, 3),
+                "pose_track_ms": 0.0,
+                "aruco_detect_ms": 0.0,
+                "aruco_ids_total": 0,
+                "worker_aruco_ids": 0,
+                "worker_collect_ms": self._elapsed_ms(stage_started),
+                "worker_entries": len(worker_entries),
+                "track_persistence_ms": 0.0,
+                "worker_aruco_match_ms": 0.0,
+            })
+            return worker_entries, timing
+
+        timing["pose_inference_skipped"] = 0
         # ── (a) 사람 포즈 트래킹 ──
         # 양 발목(15,16) 중점을 발 픽셀로 사용 (bbox 중심보다 카메라 각도에 robust).
+        stage_started = time.perf_counter()
         pose_results = self.pose_model.track(
-            frame, conf=POSE_CONF_THRESHOLD, persist=True, verbose=False, classes=[0],
+            frame,
+            conf=POSE_CONF_THRESHOLD,
+            persist=True,
+            verbose=False,
+            classes=[0],
+            imgsz=self.pose_imgsz,
         )
+        timing["pose_track_ms"] = self._elapsed_ms(stage_started)
 
         # ── (a-1) 작업자 ArUco ──
+        stage_started = time.perf_counter()
         aruco_corners, aruco_ids, _ = self.aruco_detector.detectMarkers(frame)
+        timing["aruco_detect_ms"] = self._elapsed_ms(stage_started)
         worker_aruco_centers: dict[int, tuple[float, float]] = {}
         all_detected_ids: list[int] = []
         if aruco_ids is not None:
@@ -133,6 +273,8 @@ class DetectionPipeline:
                     worker_aruco_centers[mid_int] = (
                         float(pts[:, 0].mean()), float(pts[:, 1].mean()),
                     )
+        timing["aruco_ids_total"] = len(all_detected_ids)
+        timing["worker_aruco_ids"] = len(worker_aruco_centers)
 
         if self.debug_aruco:
             print(
@@ -142,27 +284,41 @@ class DetectionPipeline:
             )
 
         # ── 1) Worker bbox + 발 픽셀 + 월드 좌표 (worker_id 미정 상태) ──
+        stage_started = time.perf_counter()
         worker_entries = self._collect_worker_entries(pose_results, cam_id)
+        timing["worker_collect_ms"] = self._elapsed_ms(stage_started)
+        timing["worker_entries"] = len(worker_entries)
 
         # ── 1.5) 시간축 persistence: track_id → worker_id ──
+        stage_started = time.perf_counter()
         cam_track_map = self.cam_track_to_worker.setdefault(cam_id, {})
         for entry in worker_entries:
             tid = entry["track_id"]
             if tid is not None and tid in cam_track_map:
                 entry["worker_id"] = cam_track_map[tid]
                 entry["id_source"] = "track_persistence"
+        timing["track_persistence_ms"] = self._elapsed_ms(stage_started)
 
         # ── 2) ArUco 마커 → 가장 가까운 bbox 매칭 (greedy 1:1) ──
+        stage_started = time.perf_counter()
         self._match_aruco_to_bbox(
             worker_aruco_centers, worker_entries, cam_track_map, cam_id,
         )
+        timing["worker_aruco_match_ms"] = self._elapsed_ms(stage_started)
+        timing["pose_cache_age_ms"] = 0.0
+        self._update_pose_cache(cam_id, worker_entries, now_perf=time.perf_counter())
 
-        detections.extend(worker_entries)
+        return worker_entries, timing
 
-        # ── (b) custom_model: forklift / box_1 / box_2 ──
-        detections.extend(self._extract_custom_objects(frame, cam_id))
-
-        return detections
+    def extract_custom(
+        self,
+        frame,
+        cam_id: str,
+    ) -> tuple[list[dict], dict[str, float | int | str]]:
+        """Custom YOLO 객체만 추출한다."""
+        timing: dict[str, float | int | str] = {"cam_id": cam_id}
+        custom_entries = self._extract_custom_objects(frame, cam_id, timing)
+        return custom_entries, timing
 
     # ── 내부: pose 결과 → worker_entries ──
     def _collect_worker_entries(self, pose_results, cam_id: str) -> list[dict]:
@@ -197,8 +353,8 @@ class DetectionPipeline:
                 x1, y1, x2, y2, kpts_xy, kpts_conf, i,
             )
             wx, wy = pixel_to_world(foot_x, foot_y, cam_id)
-            if WORKER_WORLD_BOUNDS is not None:
-                min_x, max_x, min_y, max_y = WORKER_WORLD_BOUNDS
+            if self.worker_world_bounds is not None:
+                min_x, max_x, min_y, max_y = self.worker_world_bounds
                 if not (min_x <= wx <= max_x and min_y <= wy <= max_y):
                     continue
 
@@ -220,6 +376,103 @@ class DetectionPipeline:
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
         return entries
+
+    def _should_run_pose(self, cam_id: str) -> tuple[bool, int]:
+        """Return whether the current frame should run pose inference.
+
+        POSE_EVERY_N_FRAMES=1 keeps the original behavior. Larger values run
+        YOLO pose once, then reuse a short temporal prediction for intermediate
+        frames so fusion receives continuous worker coordinates.
+        """
+        seq = self.pose_frame_seq_by_cam.get(cam_id, 0) + 1
+        self.pose_frame_seq_by_cam[cam_id] = seq
+
+        if self.pose_every_n_frames <= 1:
+            return True, seq
+
+        cache = self.pose_cache_by_cam.get(cam_id)
+        if not cache or not cache.get("current"):
+            return True, seq
+
+        return (seq - 1) % self.pose_every_n_frames == 0, seq
+
+    def _update_pose_cache(
+        self,
+        cam_id: str,
+        worker_entries: list[dict],
+        *,
+        now_perf: float,
+    ) -> None:
+        """Store the last two real pose outputs for short extrapolation."""
+        previous_cache = self.pose_cache_by_cam.get(cam_id, {})
+        self.pose_cache_by_cam[cam_id] = {
+            "previous": deepcopy(previous_cache.get("current", [])),
+            "previous_ts": previous_cache.get("ts"),
+            "current": deepcopy(worker_entries),
+            "ts": now_perf,
+        }
+
+    def _predict_cached_worker_entries(
+        self,
+        cam_id: str,
+        *,
+        now_perf: float,
+    ) -> tuple[list[dict], float]:
+        """Reuse cached worker entries and extrapolate world coordinates briefly."""
+        cache = self.pose_cache_by_cam.get(cam_id, {})
+        current = deepcopy(cache.get("current", []))
+        current_ts = float(cache.get("ts") or now_perf)
+        cache_age_s = max(0.0, now_perf - current_ts)
+
+        previous = cache.get("previous") or []
+        previous_ts = cache.get("previous_ts")
+        can_extrapolate = (
+            previous
+            and previous_ts is not None
+            and current_ts > float(previous_ts)
+            and cache_age_s <= self.pose_skip_max_extrapolate_s
+        )
+        previous_by_key = {
+            self._worker_entry_key(entry, idx): entry
+            for idx, entry in enumerate(previous)
+        }
+        dt = current_ts - float(previous_ts) if previous_ts is not None else 0.0
+
+        for idx, entry in enumerate(current):
+            entry["pose_inference_skipped"] = True
+            entry["pose_source"] = "temporal_hold"
+            entry["pose_cache_age_ms"] = round(cache_age_s * 1000.0, 3)
+            if not can_extrapolate or dt <= 1e-6:
+                continue
+
+            prev = previous_by_key.get(self._worker_entry_key(entry, idx))
+            if not prev:
+                continue
+            try:
+                cur_world = entry["world"]
+                prev_world = prev["world"]
+                vx = (float(cur_world["x"]) - float(prev_world["x"])) / dt
+                vy = (float(cur_world["y"]) - float(prev_world["y"])) / dt
+                entry["world"] = {
+                    "x": round(float(cur_world["x"]) + vx * cache_age_s, 3),
+                    "y": round(float(cur_world["y"]) + vy * cache_age_s, 3),
+                }
+                entry["pose_source"] = "temporal_extrapolation"
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        return current, cache_age_s
+
+    @staticmethod
+    def _worker_entry_key(entry: dict, index: int) -> tuple[str, object]:
+        """Stable key for matching cached worker entries across real pose frames."""
+        track_id = entry.get("track_id")
+        if track_id is not None:
+            return "track", track_id
+        worker_id = entry.get("worker_id")
+        if worker_id is not None:
+            return "worker", worker_id
+        return "index", index
 
     # ── 내부: 발 픽셀 결정 (양발목 평균 → 한쪽 발목 → bbox 하단 폴백) ──
     @staticmethod
@@ -293,12 +546,35 @@ class DetectionPipeline:
                 )
 
     # ── 내부: custom_model 검출 (forklift / box_1 / box_2) ──
-    def _extract_custom_objects(self, frame, cam_id: str) -> list[dict]:
+    def _extract_custom_objects(
+        self,
+        frame,
+        cam_id: str,
+        timing: dict[str, float | int | str] | None = None,
+    ) -> list[dict]:
         out: list[dict] = []
         if self.custom_model is None:
+            if timing is not None:
+                timing["custom_model_enabled"] = 0
+                timing["custom_yolo_ms"] = 0.0
+                timing["custom_postprocess_ms"] = 0.0
+                timing["custom_objects"] = 0
             return out
 
-        results = self.custom_model(frame, conf=0.5, verbose=False)
+        if timing is not None:
+            timing["custom_model_enabled"] = 1
+            timing["custom_imgsz"] = self.custom_imgsz
+        stage_started = time.perf_counter()
+        results = self.custom_model(
+            frame,
+            conf=0.5,
+            verbose=False,
+            imgsz=self.custom_imgsz,
+        )
+        if timing is not None:
+            timing["custom_yolo_ms"] = self._elapsed_ms(stage_started)
+
+        stage_started = time.perf_counter()
         frame_h, frame_w = frame.shape[:2]
         for box in results[0].boxes:
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
@@ -352,6 +628,9 @@ class DetectionPipeline:
                 "dropzone_usable": dropzone_usable,
                 "world": {"x": round(wx, 3), "y": round(wy, 3)},
             })
+        if timing is not None:
+            timing["custom_postprocess_ms"] = self._elapsed_ms(stage_started)
+            timing["custom_objects"] = len(out)
         return out
 
     # ── 메인 API: 두 카메라 detection 사이 worker_id 교차 전파 ──
@@ -428,3 +707,6 @@ class DetectionPipeline:
         """worker ID persistence state 모두 비움."""
         self.cam_track_to_worker.clear()
         self.worker_world_state.clear()
+        self.pose_frame_seq_by_cam.clear()
+        self.pose_cache_by_cam.clear()
+        self.last_timings_by_cam.clear()

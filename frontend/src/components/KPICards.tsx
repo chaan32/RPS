@@ -1,7 +1,13 @@
-import React from 'react';
 import { Eye, ShieldAlert, Users, Award, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 
-export default function KPICards({ avgScore, totalPenaltyCount, dangerWorkers, safeDays }) {
+type KPICardsProps = {
+  avgScore: string | number;
+  totalPenaltyCount: number;
+  dangerWorkers: number;
+  safeDays: number;
+};
+
+export default function KPICards({ avgScore, totalPenaltyCount, dangerWorkers, safeDays }: KPICardsProps) {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 2xl:gap-7.5">
       

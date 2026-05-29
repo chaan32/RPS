@@ -1,4 +1,3 @@
-import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { riskFactors, RISK_COLORS } from '../data/mockData';
 
@@ -38,7 +37,7 @@ export default function RiskFactorDonut() {
                  labelLine={false}
                  label={renderCustomizedLabel}
                >
-                 {riskFactors.map((entry, index) => (
+                 {riskFactors.map((_, index) => (
                    <Cell key={`cell-${index}`} fill={RISK_COLORS[index % RISK_COLORS.length]} />
                  ))}
                </Pie>

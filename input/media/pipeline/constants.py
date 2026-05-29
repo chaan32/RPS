@@ -27,9 +27,10 @@ WORKER_STATE_TTL_S = 5.0
 POSE_CONF_THRESHOLD = 0.01
 
 # Unity blindspot 벤치마크의 worker 통로 world 좌표 범위.
-# None 이면 위치 필터를 끈다. 현재 장면에서는 cam1 지게차 false positive를 제거하고
-# cam2의 낮은 confidence 실제 worker pose를 살리는 역할을 한다.
-WORKER_WORLD_BOUNDS = (-8.2, 0.8, 2.5, 6.8)  # x_min, x_max, y_min, y_max
+# 현재 Fab/T-junction 씬은 작업자가 좌우 복도에 동시에 존재할 수 있으므로
+# 기본 범위를 넓게 잡고, 필요하면 WORKER_WORLD_BOUNDS env 로 덮어쓴다.
+# 예: WORKER_WORLD_BOUNDS=none 또는 WORKER_WORLD_BOUNDS=-10,2,-2,9
+WORKER_WORLD_BOUNDS = (-10.5, 2.5, -2.0, 8.5)  # x_min, x_max, y_min, y_max
 
 # YOLO11n-pose 의 발목 keypoint 인덱스 (COCO 17 keypoint 규격).
 LEFT_ANKLE = 15
@@ -57,4 +58,4 @@ FORKLIFT_REF_Y_RATIO = 0.75
 # Box1 중심 높이 평면에 ray-cast한 좌표가 가장 안정적이다.
 LIFTED_BOX_CLASS_NAMES = ("box_1",)
 LIFTED_BOX_PRIMARY_CAM_ID = "cam1"
-LIFTED_BOX_CENTER_UNITY_Y = 3.5
+LIFTED_BOX_CENTER_UNITY_Y = 2.2

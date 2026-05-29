@@ -1,0 +1,76 @@
+{
+  "windows": 194,
+  "workers": [
+    "W01",
+    "W02"
+  ],
+  "forklift": {
+    "class_accuracy": 0.9587628865979382,
+    "danger_accuracy": 0.9896907216494846,
+    "danger_precision": 0.9444444444444444,
+    "danger_recall": 1.0,
+    "danger_f1": 0.9714285714285714,
+    "support_danger": 34,
+    "predicted_danger": 36
+  },
+  "dropzone": {
+    "class_accuracy": 1.0,
+    "danger_accuracy": 1.0,
+    "danger_precision": 0.0,
+    "danger_recall": 0.0,
+    "danger_f1": 0.0,
+    "support_danger": 0,
+    "predicted_danger": 0
+  },
+  "first_events": {
+    "W01": {
+      "forklift": {
+        "v1_warning_frame": 23,
+        "reference_warning_frame": 23,
+        "v2_warning_frame": 23,
+        "v1_danger_frame": 23,
+        "reference_danger_frame": 23,
+        "v2_danger_frame": 23,
+        "v1_max": 1.0,
+        "reference_max": 1.0,
+        "v2_max": 0.9999771118164062
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "reference_max": 0.0,
+        "v2_max": 3.6095036648475798e-06
+      }
+    },
+    "W02": {
+      "forklift": {
+        "v1_warning_frame": 37,
+        "reference_warning_frame": 93,
+        "v2_warning_frame": 91,
+        "v1_danger_frame": 105,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 1.0,
+        "reference_max": 0.5,
+        "v2_max": 0.7162306308746338
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "reference_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "reference_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.000699999975040555,
+        "reference_max": 0.0,
+        "v2_max": 4.174631158093689e-06
+      }
+    }
+  },
+  "video_path": "model/fusion_v2/reports/scenario_tests_geometry_future/scenario_02_swapped_positions/scenario_02_swapped_positions_v2_test.mp4"
+}

@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend
 } from 'recharts';
 import {
   Menu, Search, Bell, MessageSquare, LayoutDashboard, Calendar, User,
-  CheckSquare, FileText, Table, Settings, AlertTriangle, CheckCircle,
-  Activity, MapPin, Clock, ArrowUpRight, ArrowDownRight, Truck, Box, ChevronDown,
+  CheckSquare, FileText, Table, Settings,
+  Activity, ArrowUpRight, ArrowDownRight, Truck, ChevronDown,
   Eye, ShoppingCart, ShoppingBag, Users
 } from 'lucide-react';
 
@@ -375,7 +375,7 @@ export default function TailAdminSafetyDashboard() {
                         stroke="none"
                         cornerRadius={3}
                       >
-                        {MOCK_DONUT.map((entry, index) => (
+                        {MOCK_DONUT.map((_, index) => (
                           <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                         ))}
                       </Pie>
@@ -444,7 +444,7 @@ export default function TailAdminSafetyDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {TIMELINE_EVENTS.map((event, i) => (
+                    {TIMELINE_EVENTS.map((event) => (
                       <tr key={event.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap font-semibold text-slate-800">{event.time}</td>
                         <td className="px-6 py-4 font-medium text-slate-600">{event.zone}</td>

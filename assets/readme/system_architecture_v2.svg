@@ -1,0 +1,307 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="52%" stop-color="#f2f7fb"/>
+      <stop offset="100%" stop-color="#eef5f1"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" x2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" x2="1">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#84cc16"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" x2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" x2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#db2777"/>
+    </linearGradient>
+    <linearGradient id="red" x1="0" x2="1">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .title{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:48px;font-weight:900;fill:#0f172a;letter-spacing:-0.5px}
+      .subtitle{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:21px;font-weight:500;fill:#475569}
+      .section-title{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:24px;font-weight:850;fill:#111827}
+      .section-sub{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:15px;font-weight:600;fill:#64748b}
+      .label{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:17px;font-weight:800;fill:#111827}
+      .small{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:13px;font-weight:600;fill:#64748b}
+      .tiny{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:12px;font-weight:700;fill:#64748b}
+      .badge-text{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:14px;font-weight:850;fill:#f8fafc}
+      .chip-text{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:13px;font-weight:800;fill:#334155}
+      .card{fill:#ffffff;stroke:#dbe5ef;stroke-width:2;rx:28;filter:url(#shadow)}
+      .inner{fill:#f8fafc;stroke:#d8e2ed;stroke-width:1.6;rx:18}
+      .arrow{stroke:#334155;stroke-width:4;fill:none;marker-end:url(#arrow);stroke-linecap:round}
+      .dash{stroke:#94a3b8;stroke-width:3;fill:none;stroke-dasharray:8 10;marker-end:url(#arrow);stroke-linecap:round}
+      .thin{stroke:#cbd5e1;stroke-width:2;fill:none}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1120" rx="44" fill="url(#bg)"/>
+  <circle cx="1610" cy="60" r="220" fill="#dbeafe" opacity="0.42"/>
+  <circle cx="130" cy="980" r="260" fill="#dcfce7" opacity="0.35"/>
+
+  <text x="80" y="88" class="title">Multi-View AI Backend System Architecture</text>
+  <text x="82" y="125" class="subtitle">Unity 시뮬레이션 영상 입력부터 RTSP 스트리밍, 비전 추론, BEV Fusion, DB/알림/리포트, React 대시보드까지 연결한 구조</text>
+
+  <g transform="translate(72 178)">
+    <rect class="card" width="256" height="790"/>
+    <text x="32" y="52" class="section-title">01 Source</text>
+    <text x="32" y="80" class="section-sub">Digital Twin / Camera</text>
+
+    <g transform="translate(30 126)">
+      <rect class="inner" width="196" height="104" fill="#eef2ff" stroke="#bfdbfe"/>
+      <circle cx="44" cy="52" r="27" fill="url(#blue)"/>
+      <text x="31" y="58" class="badge-text">U</text>
+      <text x="82" y="44" class="label">Unity</text>
+      <text x="82" y="68" class="small">공장 사각지대</text>
+      <text x="82" y="88" class="small">시나리오 생성</text>
+    </g>
+
+    <g transform="translate(30 258)">
+      <rect class="inner" width="196" height="104" fill="#f8fafc"/>
+      <circle cx="44" cy="52" r="27" fill="#334155"/>
+      <text x="29" y="58" class="badge-text">C#</text>
+      <text x="82" y="44" class="label">C# Tools</text>
+      <text x="82" y="68" class="small">배치 / 녹화</text>
+      <text x="82" y="88" class="small">waypoint 자동화</text>
+    </g>
+
+    <g transform="translate(30 390)">
+      <rect class="inner" width="196" height="138" fill="#ecfeff" stroke="#a5f3fc"/>
+      <circle cx="44" cy="48" r="27" fill="#0891b2"/>
+      <text x="30" y="54" class="badge-text">C1</text>
+      <circle cx="44" cy="92" r="27" fill="#0e7490"/>
+      <text x="30" y="98" class="badge-text">C2</text>
+      <text x="82" y="42" class="label">cam1 / cam2</text>
+      <text x="82" y="68" class="small">멀티뷰 영상</text>
+      <text x="82" y="92" class="small">120 frame clips</text>
+      <text x="82" y="116" class="small">blind-spot view</text>
+    </g>
+
+    <g transform="translate(30 594)">
+      <rect width="196" height="118" rx="20" fill="#0f172a"/>
+      <text x="26" y="38" font-family="Inter,Apple SD Gothic Neo,Pretendard,Arial" font-size="16" font-weight="850" fill="#f8fafc">Output Contract</text>
+      <text x="26" y="68" class="tiny" fill="#cbd5e1">cam1_frames/*.jpg</text>
+      <text x="26" y="92" class="tiny" fill="#cbd5e1">cam2_frames/*.jpg</text>
+    </g>
+  </g>
+
+  <g transform="translate(386 178)">
+    <rect class="card" width="256" height="790"/>
+    <text x="32" y="52" class="section-title">02 Streaming</text>
+    <text x="32" y="80" class="section-sub">Publisher / RTSP Server</text>
+
+    <g transform="translate(30 146)">
+      <rect class="inner" width="196" height="104" fill="#fff7ed" stroke="#fed7aa"/>
+      <circle cx="44" cy="52" r="27" fill="#ea580c"/>
+      <text x="30" y="58" class="badge-text">FF</text>
+      <text x="82" y="44" class="label">FFmpeg</text>
+      <text x="82" y="70" class="small">frame sequence</text>
+      <text x="82" y="91" class="small">publish</text>
+    </g>
+
+    <path d="M128 270 L128 318" class="thin"/>
+
+    <g transform="translate(30 318)">
+      <rect class="inner" width="196" height="104" fill="#ecfdf5" stroke="#bbf7d0"/>
+      <circle cx="44" cy="52" r="27" fill="#16a34a"/>
+      <text x="27" y="58" class="badge-text">MX</text>
+      <text x="82" y="44" class="label">MediaMTX</text>
+      <text x="82" y="70" class="small">RTSP server</text>
+      <text x="82" y="91" class="small">localhost:8554</text>
+    </g>
+
+    <path d="M128 442 L128 490" class="thin"/>
+
+    <g transform="translate(30 490)">
+      <rect class="inner" width="196" height="126" fill="#f8fafc"/>
+      <circle cx="44" cy="52" r="27" fill="#475569"/>
+      <text x="28" y="58" class="badge-text">RT</text>
+      <text x="82" y="42" class="label">RTSP</text>
+      <text x="82" y="68" class="small">/cam1 stream</text>
+      <text x="82" y="90" class="small">/cam2 stream</text>
+      <text x="82" y="112" class="small">backend input</text>
+    </g>
+  </g>
+
+  <g transform="translate(700 178)">
+    <rect class="card" width="454" height="790"/>
+    <text x="32" y="52" class="section-title">03 AI Backend Runtime</text>
+    <text x="32" y="80" class="section-sub">Detection / BEV Transform / Risk Engine</text>
+
+    <g transform="translate(30 118)">
+      <rect class="inner" width="394" height="88" fill="#eff6ff" stroke="#bfdbfe"/>
+      <circle cx="48" cy="44" r="27" fill="url(#blue)"/>
+      <text x="34" y="50" class="badge-text">FA</text>
+      <text x="88" y="36" class="label">FastAPI / Python</text>
+      <text x="88" y="62" class="small">realtime camera runtime · metrics · API</text>
+    </g>
+
+    <g transform="translate(30 236)">
+      <rect class="inner" width="180" height="132" fill="#fff1f2" stroke="#fecdd3"/>
+      <circle cx="46" cy="48" r="27" fill="#e11d48"/>
+      <text x="32" y="54" class="badge-text">YP</text>
+      <text x="86" y="42" class="label">YOLO11s</text>
+      <text x="86" y="66" class="small">Pose</text>
+      <text x="26" y="106" class="small">worker keypoints</text>
+    </g>
+
+    <g transform="translate(244 236)">
+      <rect class="inner" width="180" height="132" fill="#fff7ed" stroke="#fed7aa"/>
+      <circle cx="46" cy="48" r="27" fill="#c2410c"/>
+      <text x="32" y="54" class="badge-text">CY</text>
+      <text x="86" y="42" class="label">Custom</text>
+      <text x="86" y="66" class="small">YOLO</text>
+      <text x="26" y="106" class="small">forklift / box</text>
+    </g>
+
+    <path d="M120 386 L194 432" class="thin"/>
+    <path d="M334 386 L260 432" class="thin"/>
+
+    <g transform="translate(30 432)">
+      <rect class="inner" width="394" height="108" fill="#f5f3ff" stroke="#ddd6fe"/>
+      <circle cx="48" cy="54" r="27" fill="#7c3aed"/>
+      <text x="33" y="60" class="badge-text">CV</text>
+      <text x="88" y="44" class="label">OpenCV / ArUco Homography</text>
+      <text x="88" y="72" class="small">pixel coordinate → BEV absolute coordinate</text>
+    </g>
+
+    <path d="M227 540 L227 578" class="thin"/>
+
+    <g transform="translate(30 578)">
+      <rect class="inner" width="180" height="112" fill="#f8fafc"/>
+      <circle cx="46" cy="50" r="27" fill="#0f172a"/>
+      <text x="34" y="56" class="badge-text">V1</text>
+      <text x="86" y="42" class="label">Fusion V1</text>
+      <text x="26" y="82" class="small">rule · TTC · FH</text>
+    </g>
+
+    <g transform="translate(244 578)">
+      <rect class="inner" width="180" height="112" fill="#ecfdf5" stroke="#bbf7d0"/>
+      <circle cx="46" cy="50" r="27" fill="#059669"/>
+      <text x="33" y="56" class="badge-text">V2</text>
+      <text x="86" y="42" class="label">Fusion V2</text>
+      <text x="26" y="82" class="small">GRU · 24-frame</text>
+    </g>
+  </g>
+
+  <g transform="translate(1212 178)">
+    <rect class="card" width="256" height="790"/>
+    <text x="32" y="52" class="section-title">04 Services</text>
+    <text x="32" y="80" class="section-sub">Storage / Async / Alert</text>
+
+    <g transform="translate(30 126)">
+      <rect class="inner" width="196" height="92" fill="#eff6ff" stroke="#bfdbfe"/>
+      <circle cx="44" cy="46" r="27" fill="#2563eb"/>
+      <text x="30" y="52" class="badge-text">PG</text>
+      <text x="82" y="38" class="label">PostgreSQL</text>
+      <text x="82" y="64" class="small">incident index</text>
+    </g>
+
+    <g transform="translate(30 250)">
+      <rect class="inner" width="196" height="92" fill="#fef2f2" stroke="#fecaca"/>
+      <circle cx="44" cy="46" r="27" fill="#dc2626"/>
+      <text x="30" y="52" class="badge-text">RD</text>
+      <text x="82" y="38" class="label">Redis</text>
+      <text x="82" y="64" class="small">async report job</text>
+    </g>
+
+    <g transform="translate(30 374)">
+      <rect class="inner" width="196" height="92" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <circle cx="44" cy="46" r="27" fill="#16a34a"/>
+      <text x="29" y="52" class="badge-text">MQ</text>
+      <text x="82" y="38" class="label">MQTT</text>
+      <text x="82" y="64" class="small">warning / danger</text>
+    </g>
+
+    <g transform="translate(30 498)">
+      <rect class="inner" width="196" height="92" fill="#fff7ed" stroke="#fed7aa"/>
+      <circle cx="44" cy="46" r="27" fill="#ea580c"/>
+      <text x="32" y="52" class="badge-text">LL</text>
+      <text x="82" y="38" class="label">Ollama</text>
+      <text x="82" y="64" class="small">daily report</text>
+    </g>
+
+    <g transform="translate(30 646)">
+      <rect width="196" height="66" rx="18" fill="#0f172a"/>
+      <text x="26" y="28" class="tiny" fill="#e2e8f0">Risk Event</text>
+      <text x="26" y="50" class="tiny" fill="#e2e8f0">DB log · Snapshot · Alert</text>
+    </g>
+  </g>
+
+  <g transform="translate(1526 178)">
+    <rect class="card" width="202" height="790"/>
+    <text x="32" y="52" class="section-title">05 Client</text>
+    <text x="32" y="80" class="section-sub">Dashboard / Report</text>
+
+    <g transform="translate(28 146)">
+      <rect class="inner" width="146" height="92" fill="#ecfeff" stroke="#a5f3fc"/>
+      <circle cx="36" cy="46" r="27" fill="#0891b2"/>
+      <text x="21" y="52" class="badge-text">RE</text>
+      <text x="78" y="39" class="label">React</text>
+      <text x="78" y="64" class="small">dashboard</text>
+    </g>
+
+    <g transform="translate(28 278)">
+      <rect class="inner" width="146" height="92" fill="#f5f3ff" stroke="#ddd6fe"/>
+      <circle cx="36" cy="46" r="27" fill="#7c3aed"/>
+      <text x="25" y="52" class="badge-text">VI</text>
+      <text x="78" y="39" class="label">Vite</text>
+      <text x="78" y="64" class="small">frontend build</text>
+    </g>
+
+    <g transform="translate(28 410)">
+      <rect class="inner" width="146" height="126" fill="#f8fafc"/>
+      <circle cx="36" cy="44" r="27" fill="#334155"/>
+      <text x="23" y="50" class="badge-text">UI</text>
+      <text x="78" y="37" class="label">Admin</text>
+      <text x="78" y="62" class="small">workers</text>
+      <text x="78" y="84" class="small">snapshots</text>
+      <text x="78" y="106" class="small">reports</text>
+    </g>
+  </g>
+
+  <path d="M328 573 C350 573 360 573 386 573" class="arrow"/>
+  <text x="324" y="548" class="tiny">video frames</text>
+
+  <path d="M642 573 C668 508 671 368 700 314" class="arrow"/>
+  <text x="633" y="492" class="tiny">RTSP input</text>
+
+  <path d="M1154 782 C1185 736 1194 610 1212 598" class="arrow"/>
+  <text x="1130" y="676" class="tiny">risk event</text>
+
+  <path d="M1468 330 C1492 330 1505 330 1526 330" class="arrow"/>
+  <text x="1459" y="302" class="tiny">API</text>
+
+  <path d="M1468 598 C1492 588 1505 548 1526 528" class="arrow"/>
+  <text x="1452" y="577" class="tiny">report</text>
+
+  <g transform="translate(80 1000)">
+    <rect width="1640" height="70" rx="24" fill="#e2e8f0"/>
+    <text x="34" y="42" class="chip-text">Data Contract</text>
+    <text x="204" y="42" class="small">RTSP frames</text>
+    <path d="M308 37 L380 37" class="dash" marker-end="url(#arrow)"/>
+    <text x="402" y="42" class="small">YOLO detections</text>
+    <path d="M536 37 L608 37" class="dash" marker-end="url(#arrow)"/>
+    <text x="630" y="42" class="small">BEV coordinates</text>
+    <path d="M778 37 L850 37" class="dash" marker-end="url(#arrow)"/>
+    <text x="872" y="42" class="small">Fusion risk score</text>
+    <path d="M1024 37 L1096 37" class="dash" marker-end="url(#arrow)"/>
+    <text x="1118" y="42" class="small">DB / MQTT / Report</text>
+    <path d="M1286 37 L1358 37" class="dash" marker-end="url(#arrow)"/>
+    <text x="1380" y="42" class="small">React dashboard</text>
+  </g>
+</svg>

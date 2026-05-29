@@ -1,18 +1,13 @@
 {
-  "note": "Unity ArUco blindspot scene. 월드 좌표계 1 unit = 1m.",
+  "note": "Unity customize scene. 월드 좌표계 1 unit = 1m. ID30을 원점으로 두고, Unity +X 방향은 world -X, Unity +Z 방향은 world +Y로 둔다.",
   "origin_description": "ID 30 = 원점 (0, 0). -X 방향은 ID 30 → ID 31, +Y 방향은 ID 30 → ID 32.",
   "aruco_dictionary": "DICT_5X5_50",
-  "required_calibration_ids": [30, 31, 32, 33],
-  "shared_calibration_ids": [30, 31, 32, 33, 40, 41, 42, 43, 38],
+  "required_calibration_ids": [],
+  "shared_calibration_ids": [30, 31, 32, 33],
   "markers": [
     { "id": 30, "world_x":   0.00, "world_y":  0.00 },
-    { "id": 31, "world_x":  -5.00, "world_y":  0.00 },
-    { "id": 32, "world_x":   0.00, "world_y":  5.00 },
-    { "id": 33, "world_x":  -5.00, "world_y":  5.00 },
-    { "id": 40, "world_x":   0.00, "world_y":  6.50 },
-    { "id": 41, "world_x":   1.50, "world_y":  5.00 },
-    { "id": 42, "world_x":   0.00, "world_y": -1.50 },
-    { "id": 43, "world_x":   1.50, "world_y":  0.00 },
-    { "id": 38, "world_x":  -5.00, "world_y":  6.50 }
+    { "id": 31, "world_x":  -8.02, "world_y":  0.02 },
+    { "id": 32, "world_x":  -0.02, "world_y":  8.07 },
+    { "id": 33, "world_x":  -8.01, "world_y":  8.01 }
   ]
 }

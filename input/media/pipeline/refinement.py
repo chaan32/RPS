@@ -17,14 +17,21 @@ THREAT_TYPES = ("forklift", "box_1", "box_2")
 
 @dataclass(frozen=True)
 class DetectionRefinerConfig:
-    """Thresholds for the first-pass single-worker Unity benchmark refiner."""
+    """Thresholds for the Unity CCTV benchmark refiner."""
 
-    min_unidentified_worker_confidence: float = 0.005
+    min_unidentified_worker_confidence: float = 0.05
     low_conf_overlap_confidence: float = 0.08
     low_conf_overlap_iou: float = 0.10
     low_conf_overlap_worker_coverage: float = 0.45
-    max_unidentified_workers_per_camera: int = 1
+    forklift_attached_pose_confidence: float = 0.35
+    forklift_attached_pose_iou: float = 0.30
+    forklift_attached_pose_worker_coverage: float = 0.65
+    fallback_overlap_confidence: float = 0.16
+    fallback_block_iou: float = 0.08
+    fallback_block_worker_coverage: float = 0.35
+    max_unidentified_workers_per_camera: int = 2
     max_worker_bbox_area_ratio: float = 0.20
+    resolve_single_worker_cross_camera_disagreement: bool = False
     worker_cross_camera_disagreement_m: float = 1.25
     worker_score_tie_margin: float = 0.10
     preferred_worker_cam: str = "cam2"
@@ -34,7 +41,7 @@ class DetectionRefiner:
     """Filter raw per-camera detections into fusion-ready detections.
 
     Current benchmark assumption:
-      - one worker is active in the Unity collision scenarios,
+      - one or two workers can be active in the Unity collision scenarios,
       - one forklift is active,
       - at most one box/dropzone object of each class is useful per camera.
 
@@ -75,9 +82,13 @@ class DetectionRefiner:
         return best
 
     def _refine_workers(self, workers: list[dict], threats: Iterable[dict]) -> list[dict]:
+        threats = list(threats)
         accepted: list[dict] = []
+        rejected: list[tuple[dict, str]] = []
         for worker in workers:
-            if self._reject_worker(worker, threats):
+            reject_reason = self._reject_worker_reason(worker, threats)
+            if reject_reason is not None:
+                rejected.append((worker, reject_reason))
                 continue
             copied = dict(worker)
             copied["refine_score"] = round(self._worker_score(copied, threats), 4)
@@ -85,10 +96,21 @@ class DetectionRefiner:
             accepted.append(copied)
 
         if not accepted and workers:
-            fallback = dict(max(workers, key=_confidence))
+            fallback_original = max(workers, key=_confidence)
+            fallback = dict(fallback_original)
+            fallback_reason = next(
+                (reason for worker, reason in rejected if worker is fallback_original),
+                "",
+            )
+            if not self._allow_rejected_worker_fallback(fallback, fallback_reason, threats):
+                return []
             fallback["refine_score"] = round(self._worker_score(fallback, threats), 4)
             fallback["refined"] = True
-            fallback["refine_reason"] = "best_worker_fallback"
+            fallback["refine_reason"] = (
+                "best_worker_fallback"
+                if not fallback_reason
+                else f"best_worker_fallback_after_{fallback_reason}"
+            )
             return [fallback]
 
         identified_by_id: dict[str, dict] = {}
@@ -115,34 +137,81 @@ class DetectionRefiner:
             worker["refine_reason"] = "best_unidentified_worker"
         return kept
 
-    def _reject_worker(self, worker: dict, threats: Iterable[dict]) -> bool:
+    def _reject_worker_reason(self, worker: dict, threats: Iterable[dict]) -> str | None:
         if worker.get("worker_id"):
-            return False
+            return None
 
         conf = _confidence(worker)
         if conf < self.config.min_unidentified_worker_confidence:
-            return True
+            return "low_confidence"
 
         if float(worker.get("bbox_area_ratio") or 0.0) > self.config.max_worker_bbox_area_ratio:
-            return True
-
-        if conf >= self.config.low_conf_overlap_confidence:
-            return False
+            return "oversized_bbox"
 
         worker_box = worker.get("bbox_px")
         if worker_box is None:
-            return False
+            return None
 
         for threat in threats:
             if threat.get("type") != "forklift":
                 continue
             iou, worker_coverage = _overlap_metrics(worker_box, threat.get("bbox_px"))
             if (
-                iou >= self.config.low_conf_overlap_iou
-                or worker_coverage >= self.config.low_conf_overlap_worker_coverage
+                conf < self.config.forklift_attached_pose_confidence
+                and (
+                    iou >= self.config.forklift_attached_pose_iou
+                    or worker_coverage >= self.config.forklift_attached_pose_worker_coverage
+                )
             ):
-                return True
-        return False
+                return "forklift_attached_pose"
+            if (
+                conf < self.config.low_conf_overlap_confidence
+                and (
+                    iou >= self.config.low_conf_overlap_iou
+                    or worker_coverage >= self.config.low_conf_overlap_worker_coverage
+                )
+            ):
+                return "low_conf_forklift_overlap"
+        return None
+
+    def _allow_rejected_worker_fallback(
+        self,
+        worker: dict,
+        reject_reason: str,
+        threats: Iterable[dict],
+    ) -> bool:
+        """Only revive rejected workers when they are not forklift-attached poses.
+
+        The Unity forklift can produce low-confidence person poses around the
+        cage/seat area.  Reviving those detections creates believable-looking
+        but completely wrong world coordinates.  Missing one frame is safer
+        than injecting a false worker into BEV/fusion.
+        """
+        if reject_reason in {
+            "low_confidence",
+            "oversized_bbox",
+            "forklift_attached_pose",
+        }:
+            return False
+
+        worker_box = worker.get("bbox_px")
+        if worker_box is None:
+            return True
+
+        conf = _confidence(worker)
+        for threat in threats:
+            if threat.get("type") != "forklift":
+                continue
+            iou, worker_coverage = _overlap_metrics(worker_box, threat.get("bbox_px"))
+            if (
+                conf < self.config.fallback_overlap_confidence
+                and (
+                    iou >= self.config.fallback_block_iou
+                    or worker_coverage >= self.config.fallback_block_worker_coverage
+                )
+            ):
+                return False
+        return True
 
     def _worker_score(self, worker: dict, threats: Iterable[dict]) -> float:
         score = _confidence(worker)
@@ -171,6 +240,9 @@ class DetectionRefiner:
         far apart to be the same person, keeping both makes the overlay and
         fallback fusion input misleading.
         """
+        if not self.config.resolve_single_worker_cross_camera_disagreement:
+            return
+
         per_cam: dict[str, dict] = {}
         for cam_id, detections in refined.items():
             workers = [d for d in detections if d.get("type") == WORKER_TYPE]

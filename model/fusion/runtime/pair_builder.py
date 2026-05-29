@@ -9,6 +9,9 @@ cam1 + cam2 의 detection 결과를 합쳐서:
 
 from __future__ import annotations
 
+import os
+import time
+
 import numpy as np
 
 from input.media.camera_geometry import triangulate_pixels_to_world
@@ -21,16 +24,118 @@ BOX_CLASS_NAMES = ("box_1", "box_2")
 # 같은 사람이라면 두 카메라의 월드 좌표는 homography 오차 범위 내(보통 < 1m).
 CROSS_CAM_MATCH_RADIUS = 1.5
 
-# 현재 Unity 벤치마크는 단일 작업자 시나리오다. 작업자용 ArUco ID가 없더라도
-# 미식별 worker detection이 여러 개여도 fusion 입력이 끊기지 않게 대표 W01을 선택한다.
-SINGLE_WORKER_FALLBACK_ID = "W01"
-SINGLE_WORKER_PREFERRED_CAM = "cam2"
+# 작업자용 ArUco ID가 없는 Unity 시나리오에서는 pose 검출 좌표를 클러스터링하고
+# 짧은 시간 동안 유지되는 익명 worker_id(W01/W02)를 부여한다.
+ANON_WORKER_MAX = int(os.getenv("ANON_WORKER_MAX", "2"))
+ANON_CLUSTER_RADIUS_M = float(os.getenv("ANON_WORKER_CLUSTER_RADIUS_M", "1.15"))
+ANON_ID_MATCH_RADIUS_M = float(os.getenv("ANON_WORKER_ID_MATCH_RADIUS_M", "1.80"))
+ANON_TRACK_TTL_S = float(os.getenv("ANON_WORKER_TRACK_TTL_S", "1.50"))
 
 # 두 카메라 모두에서 인양물이 충분히 크게 보이면 bbox center ray triangulation을
 # 우선 사용한다. 너무 작은/가장자리 일부만 잡힌 박스는 cam1 fallback이 더 안정적이다.
 MULTIVIEW_BOX_MIN_AREA_RATIO = 0.05
 DEFAULT_IMAGE_SIZE = (1920, 1080)
 DROPZONE_WORLD_BOUNDS = ((-10.0, 3.0), (-5.0, 7.0))
+
+
+def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return float(((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5)
+
+
+def _mean_xy(points: list[tuple[float, float]]) -> tuple[float, float]:
+    return (
+        float(np.mean([p[0] for p in points])),
+        float(np.mean([p[1] for p in points])),
+    )
+
+
+class AnonymousWorkerAssigner:
+    """Assign stable W01/W02 IDs to workers without body-mounted ArUco markers."""
+
+    def __init__(
+        self,
+        max_workers: int = ANON_WORKER_MAX,
+        match_radius_m: float = ANON_ID_MATCH_RADIUS_M,
+        ttl_s: float = ANON_TRACK_TTL_S,
+    ):
+        self.max_workers = max_workers
+        self.match_radius_m = match_radius_m
+        self.ttl_s = ttl_s
+        self.tracks: dict[str, dict[str, object]] = {}
+
+    def observe_named(self, workers_xy: dict[str, tuple[float, float]]) -> None:
+        """Keep anonymous ID state aligned when an ID was resolved upstream."""
+        now = time.time()
+        for worker_id, xy in workers_xy.items():
+            if worker_id.startswith("W"):
+                self.tracks[worker_id] = {"xy": xy, "ts": now}
+
+    def assign(
+        self,
+        candidates: list[dict],
+        reserved_ids: set[str] | None = None,
+    ) -> dict[str, tuple[float, float]]:
+        """Return stable IDs for anonymous worker candidate centroids."""
+        now = time.time()
+        reserved_ids = reserved_ids or set()
+        self._prune(now)
+
+        assigned: dict[str, tuple[float, float]] = {}
+        used_tracks: set[str] = set()
+        candidates = sorted(
+            candidates,
+            key=lambda item: float(item.get("confidence") or 0.0),
+            reverse=True,
+        )[: self.max_workers]
+
+        for candidate in candidates:
+            xy = candidate["xy"]
+            best_id = None
+            best_dist = float("inf")
+            for worker_id, track in self.tracks.items():
+                if worker_id in reserved_ids or worker_id in used_tracks:
+                    continue
+                track_xy = track["xy"]
+                dist = _dist(xy, track_xy)
+                if dist <= self.match_radius_m and dist < best_dist:
+                    best_dist = dist
+                    best_id = worker_id
+
+            if best_id is None:
+                # A stale or fast-moving track must not block a currently visible
+                # worker.  Reuse an unmatched anonymous ID if every existing track
+                # is outside the match radius; missing a visible worker is worse
+                # than a temporary W01/W02 identity swap in the Unity benchmark.
+                best_id = self._next_available_id(
+                    reserved_ids | used_tracks | set(assigned)
+                )
+            if best_id is None:
+                continue
+
+            assigned[best_id] = xy
+            used_tracks.add(best_id)
+            self.tracks[best_id] = {"xy": xy, "ts": now}
+
+        return assigned
+
+    def _next_available_id(self, blocked: set[str]) -> str | None:
+        for idx in range(1, self.max_workers + 1):
+            worker_id = f"W{idx:02d}"
+            if worker_id not in blocked:
+                return worker_id
+        return None
+
+    def _prune(self, now: float) -> None:
+        stale = [
+            worker_id
+            for worker_id, track in self.tracks.items()
+            if now - float(track.get("ts") or 0.0) > self.ttl_s
+        ]
+        for worker_id in stale:
+            self.tracks.pop(worker_id, None)
+
+
+_ANON_ASSIGNER = AnonymousWorkerAssigner()
 
 
 def _bbox_center(det: dict) -> tuple[float, float]:
@@ -71,6 +176,34 @@ def _multiview_box_xy(boxes_by_type_cam: dict[str, dict[str, dict]]) -> tuple[fl
     return None
 
 
+def _cluster_anonymous_workers(candidates: list[dict]) -> list[dict]:
+    """Merge cam1/cam2 anonymous detections that refer to the same person."""
+    clusters: list[dict] = []
+    for candidate in sorted(candidates, key=lambda item: item["confidence"], reverse=True):
+        xy = candidate["xy"]
+        best_cluster = None
+        best_dist = float("inf")
+        for cluster in clusters:
+            dist = _dist(xy, cluster["xy"])
+            if dist <= ANON_CLUSTER_RADIUS_M and dist < best_dist:
+                best_dist = dist
+                best_cluster = cluster
+
+        if best_cluster is None:
+            clusters.append({
+                "points": [xy],
+                "xy": xy,
+                "confidence": candidate["confidence"],
+            })
+            continue
+
+        best_cluster["points"].append(xy)
+        best_cluster["xy"] = _mean_xy(best_cluster["points"])
+        best_cluster["confidence"] = max(best_cluster["confidence"], candidate["confidence"])
+
+    return clusters
+
+
 def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
     """cam1 + cam2 detection list → (workers_xy, forklift_xy, dropzone_xy).
 
@@ -84,9 +217,8 @@ def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
       2) 한쪽 카메라(예: cam2)가 ArUco 를 놓쳐서 worker_id=None 인 워커가 있으면,
          다른 카메라가 식별한 같은 worker_id 위치(월드 좌표) 근처(<1.5m)에 있을 때
          그 worker_id 로 흡수 → 양쪽 카메라 위치 평균으로 안정화.
-      3) 식별된 워커가 전혀 없고 미식별 worker가 카메라당 최대 1개뿐이면,
-         단일 작업자 벤치마크로 보고 W01로 사용한다.
-      4) 그 외 마지막까지 식별 안 된 워커는 fusion 입력에서 제외한다.
+      3) 끝까지 식별 안 된 워커는 cam1/cam2 좌표를 클러스터링한 뒤 W01/W02 익명 ID를
+         부여한다. 이 ID는 짧은 시간 동안 유지되어 BEV/fusion/DB 기록이 끊기지 않는다.
     """
     # 1) cam 별로 식별/미식별 분리
     def _split(dets):
@@ -113,51 +245,42 @@ def pick_positions(d1: list[dict], d2: list[dict]) -> tuple:
         workers_by_id.setdefault(wid, []).append(xy)
 
     # 3) 한쪽이 식별한 워커의 평균 위치 → 다른 쪽 미식별 워커 흡수
-    def _absorb(unided_xys, source_cam_label):
-        """unided_xys 중 식별된 워커 위치 근처에 있는 점을 그 워커 그룹에 추가."""
+    def _absorb(unided_items):
+        """식별된 워커 위치 근처의 미식별 점은 같은 worker_id로 흡수한다."""
+        leftovers = []
+        unided_xys = [item["xy"] for item in unided_items]
         if not unided_xys or not workers_by_id:
-            return
+            return list(unided_items)
         # 현재까지 모인 워커별 평균 위치 (매번 다시 계산해서 흡수 후 갱신 반영)
-        for unided_xy in unided_xys:
+        for item in unided_items:
+            unided_xy = item["xy"]
             best_wid = None
             best_dist = float("inf")
             for wid, pts in workers_by_id.items():
-                cx = float(np.mean([p[0] for p in pts]))
-                cy = float(np.mean([p[1] for p in pts]))
-                d = ((unided_xy[0] - cx) ** 2 + (unided_xy[1] - cy) ** 2) ** 0.5
+                centroid = _mean_xy(pts)
+                d = _dist(unided_xy, centroid)
                 if d <= CROSS_CAM_MATCH_RADIUS and d < best_dist:
                     best_dist = d
                     best_wid = wid
             if best_wid is not None:
                 workers_by_id[best_wid].append(unided_xy)
+            else:
+                leftovers.append(item)
+        return leftovers
 
     # cam1 미식별 → cam2 식별 워커에 매칭, 그 반대도 마찬가지
-    _absorb([item["xy"] for item in cam1_unided], "cam1")
-    _absorb([item["xy"] for item in cam2_unided], "cam2")
-
-    # 단일 작업자 Unity 벤치마크 fallback.
-    # worker ArUco가 없는 녹화에서는 YOLO pose가 같은 사람을 여러 후보로 반환할 수 있다.
-    # 이때 후보 수 때문에 fusion 입력이 끊기지 않도록 worker 카메라(cam2)의 최고 confidence
-    # 후보 하나를 W01로 사용하고, cam2가 놓친 프레임에만 cam1 후보를 fallback으로 쓴다.
-    if not workers_by_id:
-        preferred_unided = (
-            cam2_unided if SINGLE_WORKER_PREFERRED_CAM == "cam2" else cam1_unided
-        )
-        fallback_unided = (
-            cam1_unided if SINGLE_WORKER_PREFERRED_CAM == "cam2" else cam2_unided
-        )
-        candidates = preferred_unided or fallback_unided
-        if candidates:
-            best = max(candidates, key=lambda item: item["confidence"])
-            workers_by_id[SINGLE_WORKER_FALLBACK_ID] = [best["xy"]]
+    anonymous_candidates = _absorb(cam1_unided) + _absorb(cam2_unided)
+    if anonymous_candidates:
+        clusters = _cluster_anonymous_workers(anonymous_candidates)
+        assigned = _ANON_ASSIGNER.assign(clusters, reserved_ids=set(workers_by_id))
+        for wid, xy in assigned.items():
+            workers_by_id.setdefault(wid, []).append(xy)
 
     # 4) worker_id 별 평균
     workers_xy: dict[str, tuple[float, float]] = {}
     for wid, pts in workers_by_id.items():
-        workers_xy[wid] = (
-            float(np.mean([p[0] for p in pts])),
-            float(np.mean([p[1] for p in pts])),
-        )
+        workers_xy[wid] = _mean_xy(pts)
+    _ANON_ASSIGNER.observe_named(workers_xy)
 
     # 5) forklift / dropzone
     forklifts, boxes, preferred_boxes = [], [], []

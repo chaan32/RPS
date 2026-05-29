@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import math
+import os
 from collections import deque as _deque
 
 from ..risk_output import FusionPrediction, ThreatType
@@ -87,10 +88,20 @@ _BODY_TO_PAYLOAD: dict[str, str | None] = {
 # 5Hz 기준 0.10 m/frame ≈ 0.5 m/s (사람 평지 걷기 1.4 m/s 의 약 1/3).
 FORKLIFT_STATIC_SPEED = 0.10
 
+# Forklift collision risk is driven by its forward footprint/fork area, not only
+# the bbox-derived reference point.  We project a small hazard point ahead of the
+# tracked forklift motion and feed that point to fusion/early-warning logic.
+FORKLIFT_HAZARD_FORWARD_OFFSET_M = float(
+    os.getenv("FORKLIFT_HAZARD_FORWARD_OFFSET_M", "1.0")
+)
+FORKLIFT_HAZARD_MIN_DISPLACEMENT_M = float(
+    os.getenv("FORKLIFT_HAZARD_MIN_DISPLACEMENT_M", "0.25")
+)
+
 # 드롭존 중심으로부터 이 반경(m) 안에 워커가 있으면 fusion 출력과 무관하게
 # danger 로 격상한다. 학습 모델은 인양 idle 시 dropzone 을 0/0.5 정도로 출력하지만,
 # 실제 운영에선 idle 이어도 접근 자체가 위험 인지 대상이라는 정책.
-DROPZONE_ALERT_RADIUS = 0.5
+DROPZONE_ALERT_RADIUS = float(os.getenv("DROPZONE_ALERT_RADIUS_M", "0.5"))
 
 
 def avg_speed(history) -> float:
@@ -104,6 +115,40 @@ def avg_speed(history) -> float:
     dx = pts[-1][0] - pts[0][0]
     dy = pts[-1][1] - pts[0][1]
     return math.hypot(dx, dy) / max(1, len(pts) - 1)
+
+
+def forklift_hazard_point(
+    forklift_xy: tuple[float, float] | None,
+    history,
+    *,
+    forward_offset_m: float = FORKLIFT_HAZARD_FORWARD_OFFSET_M,
+    min_displacement_m: float = FORKLIFT_HAZARD_MIN_DISPLACEMENT_M,
+) -> tuple[float, float] | None:
+    """Return a forward hazard point for forklift-vs-worker risk.
+
+    `forklift_xy` is the YOLO bbox reference point.  The collision-relevant point
+    is usually closer to the moving front/fork area, so we estimate heading from
+    recent BEV positions and project a configurable offset forward.  If heading
+    is not reliable yet, fall back to the original point.
+    """
+    if forklift_xy is None:
+        return None
+    if len(history) < 2:
+        return forklift_xy
+
+    pts = list(history)
+    dx = float(pts[-1][0]) - float(pts[0][0])
+    dy = float(pts[-1][1]) - float(pts[0][1])
+    displacement = math.hypot(dx, dy)
+    if displacement < min_displacement_m:
+        return forklift_xy
+
+    ux = dx / displacement
+    uy = dy / displacement
+    return (
+        float(forklift_xy[0]) + ux * forward_offset_m,
+        float(forklift_xy[1]) + uy * forward_offset_m,
+    )
 
 
 def resolve_direction(

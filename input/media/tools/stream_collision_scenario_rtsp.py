@@ -81,15 +81,15 @@ def read_fps(info: dict[str, str], fallback: float) -> float:
 
 
 def resolve_frame_dir(scenario_path: Path, info: dict[str, str], cam_id: str) -> Path:
+    fallback = scenario_path / f"{cam_id}_frames"
+    if fallback.exists():
+        return fallback.resolve()
+
     key = f"{cam_id}_frames"
     if key in info:
         configured = Path(info[key]).expanduser()
         if configured.exists():
             return configured.resolve()
-
-    fallback = scenario_path / f"{cam_id}_frames"
-    if fallback.exists():
-        return fallback.resolve()
 
     raise FileNotFoundError(f"{cam_id} frame directory not found under {scenario_path}")
 

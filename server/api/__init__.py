@@ -2,7 +2,7 @@
 
 사용:
     from .api import (
-        health, audio, alerts, makers,
+        health, audio, alerts, workers, makers,
         images, incidents, reports, aruco,
     )
     app.include_router(health.router)

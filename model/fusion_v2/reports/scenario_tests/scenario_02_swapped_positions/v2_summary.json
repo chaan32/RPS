@@ -1,0 +1,64 @@
+{
+  "windows": 194,
+  "workers": [
+    "W01",
+    "W02"
+  ],
+  "forklift": {
+    "class_accuracy": 0.6907216494845361,
+    "danger_accuracy": 0.9536082474226805,
+    "danger_precision": 0.8888888888888888,
+    "danger_recall": 0.6956521739130435,
+    "danger_f1": 0.7804878048780488,
+    "support_danger": 23,
+    "predicted_danger": 18
+  },
+  "dropzone": {
+    "class_accuracy": 1.0,
+    "danger_accuracy": 1.0,
+    "danger_precision": 0.0,
+    "danger_recall": 0.0,
+    "danger_f1": 0.0,
+    "support_danger": 0,
+    "predicted_danger": 0
+  },
+  "first_events": {
+    "W01": {
+      "forklift": {
+        "v1_warning_frame": 23,
+        "v2_warning_frame": 23,
+        "v1_danger_frame": 23,
+        "v2_danger_frame": 23,
+        "v1_max": 1.0,
+        "v2_max": 0.9921320080757141
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.0003000000142492354,
+        "v2_max": 4.984491624782095e-06
+      }
+    },
+    "W02": {
+      "forklift": {
+        "v1_warning_frame": 37,
+        "v2_warning_frame": 26,
+        "v1_danger_frame": 105,
+        "v2_danger_frame": 111,
+        "v1_max": 1.0,
+        "v2_max": 0.8232600092887878
+      },
+      "dropzone": {
+        "v1_warning_frame": null,
+        "v2_warning_frame": null,
+        "v1_danger_frame": null,
+        "v2_danger_frame": null,
+        "v1_max": 0.000699999975040555,
+        "v2_max": 2.2432101104641333e-05
+      }
+    }
+  },
+  "video_path": "model/fusion_v2/reports/scenario_tests/scenario_02_swapped_positions/scenario_02_swapped_positions_v2_test.mp4"
+}

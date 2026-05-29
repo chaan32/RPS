@@ -1,4 +1,3 @@
-import React from 'react';
 import { User, ShieldAlert, PhoneCall } from 'lucide-react';
 
 export default function WorkerProfileModal({ worker, onClose }: { worker: any, onClose: () => void }) {

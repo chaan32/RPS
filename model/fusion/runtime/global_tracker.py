@@ -22,6 +22,9 @@ class TrackConfig:
     outlier_distance_m: float = 0.90
     max_speed_mps: float = 2.5
     max_hold_s: float = 0.60
+    extended_max_hold_s: float | None = None
+    min_measurements_for_extended_hold: int = 4
+    reset_after_outliers: int | None = None
 
 
 @dataclass
@@ -43,6 +46,8 @@ class PointTrack:
         self.last_ts: float | None = None
         self.last_measurement_ts: float | None = None
         self.missed = 0
+        self.measurements = 0
+        self.consecutive_outliers = 0
 
     def update(self, ts: float, measurement: Point | None) -> TrackUpdate | None:
         if self.xy is None:
@@ -53,6 +58,8 @@ class PointTrack:
             self.last_measurement_ts = float(ts)
             self.velocity = (0.0, 0.0)
             self.missed = 0
+            self.measurements = 1
+            self.consecutive_outliers = 0
             return TrackUpdate(
                 xy=self.xy,
                 raw_xy=measurement,
@@ -77,7 +84,13 @@ class PointTrack:
                 if self.last_measurement_ts is not None
                 else float("inf")
             )
-            stale = measurement_age > self.config.max_hold_s
+            hold_s = self.config.max_hold_s
+            if (
+                self.config.extended_max_hold_s is not None
+                and self.measurements >= self.config.min_measurements_for_extended_hold
+            ):
+                hold_s = self.config.extended_max_hold_s
+            stale = measurement_age > hold_s
             if stale:
                 return None
             self.xy = predicted
@@ -97,6 +110,38 @@ class PointTrack:
         residual = _dist(measurement, predicted)
         dynamic_gate = self.config.outlier_distance_m + self.config.max_speed_mps * dt
         outlier = residual > dynamic_gate
+
+        if outlier:
+            self.consecutive_outliers += 1
+            if (
+                self.config.reset_after_outliers is not None
+                and self.consecutive_outliers >= self.config.reset_after_outliers
+            ):
+                previous_xy = self.xy
+                self.xy = measurement
+                self.velocity = _clamp_velocity(
+                    (
+                        (self.xy[0] - previous_xy[0]) / dt,
+                        (self.xy[1] - previous_xy[1]) / dt,
+                    ),
+                    self.config.max_speed_mps,
+                )
+                self.last_ts = float(ts)
+                self.missed = 0
+                self.measurements = 1
+                self.consecutive_outliers = 0
+                return TrackUpdate(
+                    xy=self.xy,
+                    raw_xy=measurement,
+                    predicted_xy=predicted,
+                    residual_m=residual,
+                    smoothed=False,
+                    outlier=True,
+                    stale=False,
+                )
+        else:
+            self.consecutive_outliers = 0
+
         alpha = self.config.outlier_alpha if outlier else self.config.alpha
         new_xy = (
             predicted[0] + alpha * (measurement[0] - predicted[0]),
@@ -117,6 +162,8 @@ class PointTrack:
         self.xy = new_xy
         self.last_ts = float(ts)
         self.missed = 0
+        if not outlier:
+            self.measurements += 1
         return TrackUpdate(
             xy=new_xy,
             raw_xy=measurement,
@@ -142,6 +189,10 @@ class GlobalTrackManager:
             outlier_alpha=0.10,
             outlier_distance_m=0.95,
             max_speed_mps=2.2,
+            max_hold_s=0.65,
+            extended_max_hold_s=1.35,
+            min_measurements_for_extended_hold=4,
+            reset_after_outliers=3,
         )
         self.forklift_config = forklift_config or TrackConfig(
             alpha=0.75,

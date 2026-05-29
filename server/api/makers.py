@@ -1,18 +1,18 @@
-"""Maker (작업자 디바이스) CRUD 엔드포인트."""
+"""Legacy Maker CRUD endpoints kept as aliases for /workers."""
 
 from fastapi import APIRouter
 
-from ..schemas import MakerCreate, MakerResponse
+from ..schemas import WorkerCreate, WorkerResponse
 from ..service import maker_service
 
 router = APIRouter()
 
 
-@router.post("/makers", response_model=MakerResponse)
-async def create_maker(body: MakerCreate):
+@router.post("/makers", response_model=WorkerResponse)
+async def create_maker(body: WorkerCreate):
     return await maker_service.create_maker(body)
 
 
-@router.get("/makers", response_model=list[MakerResponse])
+@router.get("/makers", response_model=list[WorkerResponse])
 async def get_makers():
     return await maker_service.list_makers()

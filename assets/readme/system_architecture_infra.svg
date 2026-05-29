@@ -1,0 +1,265 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="1180" viewBox="0 0 1900 1180">
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#222"/>
+    </marker>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#111827" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg{fill:#ffffff}
+      .title{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:38px;font-weight:900;fill:#111827}
+      .subtitle{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:18px;font-weight:600;fill:#4b5563}
+      .container-title{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:21px;font-weight:900;fill:#111827}
+      .container-sub{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:14px;font-weight:700;fill:#4b5563}
+      .label{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:17px;font-weight:850;fill:#111827}
+      .sub{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:13px;font-weight:650;fill:#4b5563}
+      .tiny{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:11px;font-weight:700;fill:#4b5563}
+      .white{fill:#fff}
+      .outer{fill:#fbfdff;stroke:#1d4ed8;stroke-width:2.4;stroke-dasharray:7 5;rx:8}
+      .host{fill:#f6fbff;stroke:#22c55e;stroke-width:2.5;rx:8}
+      .zone{fill:#eef7ff;stroke:#60a5fa;stroke-width:2.1;stroke-dasharray:7 5;rx:8}
+      .runtime{fill:#f8fafc;stroke:#64748b;stroke-width:1.8;rx:8}
+      .service{fill:#fff;stroke:#cbd5e1;stroke-width:1.8;rx:8;filter:url(#softShadow)}
+      .dash{fill:none;stroke:#222;stroke-width:2.4;stroke-dasharray:7 6;marker-end:url(#arrow)}
+      .line{fill:none;stroke:#222;stroke-width:2.5;marker-end:url(#arrow)}
+      .thin{fill:none;stroke:#6b7280;stroke-width:1.7}
+      .port{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:12px;font-weight:800;fill:#2563eb}
+      .iconText{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:15px;font-weight:900;fill:#fff}
+    </style>
+  </defs>
+
+  <rect class="bg" width="1900" height="1180"/>
+  <text x="95" y="78" class="title">RPS Multi-View Collision Prediction System Architecture</text>
+  <text x="96" y="112" class="subtitle">Unity 시뮬레이션 영상을 RTSP로 제공하고, AI Backend가 BEV 좌표 변환·위험 예측·DB/알림/리포트·프론트 대시보드까지 처리하는 로컬 E2E 아키텍처</text>
+
+  <g transform="translate(88 174)">
+    <circle cx="36" cy="26" r="16" fill="#111827"/>
+    <circle cx="17" cy="67" r="17" fill="none" stroke="#111827" stroke-width="4"/>
+    <circle cx="55" cy="67" r="17" fill="none" stroke="#111827" stroke-width="4"/>
+    <path d="M36 43 L36 92" stroke="#111827" stroke-width="4"/>
+    <path d="M6 104 C14 88 58 88 66 104" fill="none" stroke="#111827" stroke-width="4"/>
+    <text x="-14" y="140" class="label">Operator</text>
+  </g>
+
+  <path d="M180 250 C220 250 226 278 275 278" class="line"/>
+  <text x="202" y="229" class="tiny">browser</text>
+
+  <rect x="275" y="138" width="1548" height="950" class="outer"/>
+  <rect x="292" y="155" width="34" height="34" rx="4" fill="#2563eb"/>
+  <text x="302" y="178" class="iconText">L</text>
+  <text x="338" y="180" class="container-title">Local Runtime Region</text>
+  <text x="338" y="204" class="container-sub">MacBook Pro / localhost network · Docker 또는 native 실행 가능</text>
+
+  <rect x="318" y="222" width="1468" height="816" class="host"/>
+  <rect x="335" y="239" width="34" height="34" rx="4" fill="#16a34a"/>
+  <text x="344" y="262" class="iconText">H</text>
+  <text x="382" y="264" class="container-title">Host Machine</text>
+  <text x="382" y="288" class="container-sub">Unity Editor · Python Conda venv · local services · frontend dev server</text>
+
+  <g transform="translate(1050 242)">
+    <rect x="0" y="0" width="700" height="66" rx="10" fill="#fff" stroke="#cbd5e1" stroke-width="1.8" filter="url(#softShadow)"/>
+    <rect x="18" y="14" width="38" height="38" rx="8" fill="#0891b2"/>
+    <text x="27" y="39" class="iconText">RE</text>
+    <text x="72" y="28" class="label">React Admin Dashboard</text>
+    <text x="72" y="50" class="sub">worker count · incident snapshots · async report status</text>
+    <rect x="390" y="14" width="38" height="38" rx="8" fill="#7c3aed"/>
+    <text x="401" y="39" class="iconText">VI</text>
+    <text x="444" y="28" class="label">Vite Dev Server</text>
+    <text x="444" y="50" class="port">localhost frontend</text>
+  </g>
+
+  <rect x="354" y="324" width="280" height="632" class="zone"/>
+  <text x="376" y="356" class="container-title">Simulation Zone</text>
+  <text x="376" y="378" class="container-sub">scenario / recording</text>
+
+  <g transform="translate(384 418)">
+    <rect class="service" width="220" height="92"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#111827"/>
+    <text x="31" y="50" class="iconText">U</text>
+    <text x="82" y="36" class="label">Unity Scene</text>
+    <text x="82" y="60" class="sub">factory blind spot</text>
+    <text x="82" y="80" class="sub">worker / forklift / box</text>
+  </g>
+  <g transform="translate(384 548)">
+    <rect class="service" width="220" height="92"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#475569"/>
+    <text x="28" y="50" class="iconText">C#</text>
+    <text x="82" y="36" class="label">Editor Tools</text>
+    <text x="82" y="60" class="sub">waypoint / capture</text>
+    <text x="82" y="80" class="sub">scenario automation</text>
+  </g>
+  <g transform="translate(384 678)">
+    <rect class="service" width="220" height="120"/>
+    <rect x="18" y="20" width="44" height="44" rx="8" fill="#0891b2"/>
+    <text x="28" y="48" class="iconText">C1</text>
+    <rect x="18" y="68" width="44" height="44" rx="8" fill="#0e7490"/>
+    <text x="28" y="96" class="iconText">C2</text>
+    <text x="82" y="38" class="label">Virtual Cameras</text>
+    <text x="82" y="64" class="sub">cam1 frames</text>
+    <text x="82" y="86" class="sub">cam2 frames</text>
+    <text x="82" y="108" class="sub">120-frame clips</text>
+  </g>
+
+  <rect x="690" y="324" width="292" height="632" class="zone"/>
+  <text x="712" y="356" class="container-title">Media Zone</text>
+  <text x="712" y="378" class="container-sub">RTSP bridge</text>
+
+  <g transform="translate(726 428)">
+    <rect class="service" width="220" height="92"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#f97316"/>
+    <text x="29" y="50" class="iconText">FF</text>
+    <text x="82" y="36" class="label">FFmpeg</text>
+    <text x="82" y="60" class="sub">frame publisher</text>
+    <text x="82" y="80" class="sub">looped scenario stream</text>
+  </g>
+  <g transform="translate(726 570)">
+    <rect class="service" width="220" height="92"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#16a34a"/>
+    <text x="27" y="50" class="iconText">MT</text>
+    <text x="82" y="36" class="label">MediaMTX</text>
+    <text x="82" y="60" class="sub">RTSP server</text>
+    <text x="82" y="80" class="port">:8554</text>
+  </g>
+  <g transform="translate(726 712)">
+    <rect class="service" width="220" height="110"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#334155"/>
+    <text x="29" y="50" class="iconText">RT</text>
+    <text x="82" y="36" class="label">RTSP Paths</text>
+    <text x="82" y="62" class="sub">rtsp://localhost:8554/cam1</text>
+    <text x="82" y="84" class="sub">rtsp://localhost:8554/cam2</text>
+  </g>
+
+  <path d="M634 738 C662 738 662 474 726 474" class="line"/>
+  <text x="650" y="452" class="tiny">frame sequence</text>
+  <path d="M836 520 L836 570" class="thin"/>
+  <path d="M836 662 L836 712" class="thin"/>
+
+  <rect x="1038" y="324" width="452" height="632" class="zone"/>
+  <text x="1060" y="356" class="container-title">AI Backend Zone</text>
+  <text x="1060" y="378" class="container-sub">detection / BEV fusion / risk decision</text>
+
+  <g transform="translate(1068 420)">
+    <rect class="service" width="392" height="82"/>
+    <rect x="18" y="19" width="44" height="44" rx="8" fill="#2563eb"/>
+    <text x="29" y="47" class="iconText">FA</text>
+    <text x="82" y="34" class="label">FastAPI Runtime</text>
+    <text x="82" y="58" class="sub">realtime_camera · metrics · API endpoint</text>
+  </g>
+
+  <g transform="translate(1068 536)">
+    <rect class="service" width="176" height="106"/>
+    <rect x="18" y="20" width="44" height="44" rx="8" fill="#e11d48"/>
+    <text x="29" y="48" class="iconText">YP</text>
+    <text x="82" y="38" class="label">YOLO11s-Pose</text>
+    <text x="34" y="82" class="sub">worker keypoints</text>
+  </g>
+  <g transform="translate(1284 536)">
+    <rect class="service" width="176" height="106"/>
+    <rect x="18" y="20" width="44" height="44" rx="8" fill="#c2410c"/>
+    <text x="29" y="48" class="iconText">CY</text>
+    <text x="82" y="38" class="label">Custom YOLO</text>
+    <text x="34" y="82" class="sub">forklift / box</text>
+  </g>
+
+  <g transform="translate(1068 684)">
+    <rect class="service" width="392" height="88"/>
+    <rect x="18" y="22" width="44" height="44" rx="8" fill="#7c3aed"/>
+    <text x="30" y="50" class="iconText">CV</text>
+    <text x="82" y="36" class="label">OpenCV + ArUco Homography</text>
+    <text x="82" y="62" class="sub">pixel coordinate → BEV absolute coordinate</text>
+  </g>
+
+  <g transform="translate(1068 810)">
+    <rect class="service" width="176" height="92"/>
+    <rect x="18" y="21" width="44" height="44" rx="8" fill="#111827"/>
+    <text x="29" y="49" class="iconText">V1</text>
+    <text x="82" y="36" class="label">Fusion V1</text>
+    <text x="34" y="74" class="sub">rule · TTC · FH</text>
+  </g>
+  <g transform="translate(1284 810)">
+    <rect class="service" width="176" height="92"/>
+    <rect x="18" y="21" width="44" height="44" rx="8" fill="#059669"/>
+    <text x="29" y="49" class="iconText">V2</text>
+    <text x="82" y="36" class="label">Fusion V2</text>
+    <text x="34" y="74" class="sub">GRU · 24-frame window</text>
+  </g>
+
+  <path d="M946 767 C990 767 1008 461 1068 461" class="line"/>
+  <text x="973" y="454" class="tiny">RTSP input</text>
+  <path d="M1400 308 C1390 350 1340 392 1265 420" class="line"/>
+  <text x="1390" y="365" class="tiny">REST API</text>
+  <path d="M1264 502 L1156 536" class="thin"/>
+  <path d="M1264 502 L1372 536" class="thin"/>
+  <path d="M1156 642 L1228 684" class="thin"/>
+  <path d="M1372 642 L1300 684" class="thin"/>
+  <path d="M1264 772 L1156 810" class="thin"/>
+  <path d="M1264 772 L1372 810" class="thin"/>
+
+  <rect x="1522" y="324" width="238" height="632" class="zone"/>
+  <text x="1544" y="356" class="container-title">Service Zone</text>
+  <text x="1544" y="378" class="container-sub">storage / async / alert</text>
+
+  <g transform="translate(1548 418)">
+    <rect class="service" width="184" height="74"/>
+    <rect x="15" y="17" width="40" height="40" rx="8" fill="#2563eb"/>
+    <text x="25" y="43" class="iconText">PG</text>
+    <text x="70" y="31" class="label">PostgreSQL</text>
+    <text x="70" y="53" class="sub">logs / index</text>
+  </g>
+  <g transform="translate(1548 522)">
+    <rect class="service" width="184" height="74"/>
+    <rect x="15" y="17" width="40" height="40" rx="8" fill="#dc2626"/>
+    <text x="25" y="43" class="iconText">RD</text>
+    <text x="70" y="31" class="label">Redis</text>
+    <text x="70" y="53" class="sub">job queue</text>
+  </g>
+  <g transform="translate(1548 626)">
+    <rect class="service" width="184" height="74"/>
+    <rect x="15" y="17" width="40" height="40" rx="8" fill="#16a34a"/>
+    <text x="24" y="43" class="iconText">MQ</text>
+    <text x="70" y="31" class="label">MQTT</text>
+    <text x="70" y="53" class="sub">alert topic</text>
+  </g>
+  <g transform="translate(1548 730)">
+    <rect class="service" width="184" height="74"/>
+    <rect x="15" y="17" width="40" height="40" rx="8" fill="#f97316"/>
+    <text x="26" y="43" class="iconText">LL</text>
+    <text x="70" y="31" class="label">Ollama</text>
+    <text x="70" y="53" class="sub">report LLM</text>
+  </g>
+
+  <path d="M1460 856 C1506 856 1506 455 1548 455" class="line"/>
+  <text x="1480" y="523" class="tiny">incident log</text>
+  <path d="M1460 856 C1510 856 1510 663 1548 663" class="line"/>
+  <text x="1483" y="648" class="tiny">alert</text>
+  <path d="M1460 856 C1510 856 1510 767 1548 767" class="line"/>
+  <text x="1480" y="755" class="tiny">report data</text>
+
+  <g transform="translate(1325 52)">
+    <rect x="0" y="0" width="206" height="64" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#softShadow)"/>
+    <rect x="16" y="14" width="36" height="36" rx="7" fill="#111827"/>
+    <text x="26" y="38" class="iconText">GH</text>
+    <text x="66" y="26" class="label">GitHub</text>
+    <text x="66" y="48" class="sub">source / README</text>
+  </g>
+  <g transform="translate(1556 52)">
+    <rect x="0" y="0" width="206" height="64" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5" filter="url(#softShadow)"/>
+    <rect x="16" y="14" width="36" height="36" rx="7" fill="#2563eb"/>
+    <text x="25" y="38" class="iconText">PF</text>
+    <text x="66" y="26" class="label">Portfolio</text>
+    <text x="66" y="48" class="sub">Notion / image</text>
+  </g>
+
+  <rect x="308" y="1060" width="1490" height="58" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.7"/>
+  <text x="330" y="1094" class="label">Network / Data Flow</text>
+  <text x="520" y="1094" class="sub">Unity frame files</text>
+  <path d="M650 1089 L720 1089" class="dash"/>
+  <text x="746" y="1094" class="sub">RTSP streams</text>
+  <path d="M858 1089 L928 1089" class="dash"/>
+  <text x="954" y="1094" class="sub">YOLO detections</text>
+  <path d="M1088 1089 L1158 1089" class="dash"/>
+  <text x="1184" y="1094" class="sub">BEV coordinates</text>
+  <path d="M1324 1089 L1394 1089" class="dash"/>
+  <text x="1420" y="1094" class="sub">Risk event / API response</text>
+</svg>

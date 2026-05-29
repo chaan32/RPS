@@ -36,12 +36,18 @@ from .visualization import draw_annotated
 
 load_dotenv(PROJECT_ROOT / ".env")
 
-def build_default_pipeline() -> DetectionPipeline:
+def build_default_pipeline(
+    *,
+    load_pose: bool = True,
+    load_custom: bool = True,
+) -> DetectionPipeline:
     """env 기반으로 DetectionPipeline 인스턴스 생성."""
     return DetectionPipeline(
-        pose_model_path="yolo11n-pose.pt",
+        pose_model_path=os.getenv("POSE_MODEL_PATH", "yolo11n-pose.pt"),
         custom_model_path=os.getenv("BEST_MODEL_PATH", "") or None,
         debug_aruco=os.getenv("DEBUG_ARUCO", "0") == "1",
+        load_pose=load_pose,
+        load_custom=load_custom,
     )
 
 

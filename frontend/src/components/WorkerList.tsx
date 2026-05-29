@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { User, Search, Clock } from 'lucide-react';
 
 export default function WorkerList({ nodeScores, onWorkerClick }: { nodeScores: any[], onWorkerClick: (w:any) => void }) {

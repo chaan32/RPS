@@ -15,5 +15,5 @@ async def upload_image(file: UploadFile = File(...)):
 
 @router.get("/images/serve")
 async def serve_usb_image(path: str):
-    """USB 저장 이미지를 HTTP 로 서빙. `<img src="/api/images/serve?path=...">` 용."""
+    """저장 이미지를 HTTP 로 서빙. `<img src="/api/images/serve?path=...">` 용."""
     return image_service.serve(path)

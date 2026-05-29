@@ -1,470 +1,393 @@
-# 산업 현장 멀티모달 안전 모니터링 시스템
+# RPS: Multi-View Risk Prediction System
 
-> **듀얼 RTSP 카메라 + 음향 센서**로 작업자·지게차·크레인 인양물의 상호작용을 분석해
-> **충돌·낙하 위험을 실시간 예측**하고, ESP32 진동 알림과 일일 LLM 리포트로 이어지는
-> 엔드투엔드 안전 시스템.
+Unity 기반 공장 사각지대 시뮬레이션에서 cam1 / cam2 영상을 생성하고, RTSP 입력처럼 백엔드에 주입한 뒤 작업자, 지게차, 인양물 DropZone의 절대좌표를 계산해 충돌 위험을 예측하는 AI 안전 모니터링 시스템입니다.
 
-![python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![fastapi](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white)
-![pytorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
-![tensorflow](https://img.shields.io/badge/TensorFlow-YAMNet-FF6F00?logo=tensorflow&logoColor=white)
-![ultralytics](https://img.shields.io/badge/YOLO-11n-00FFFF)
-![react](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
-![postgres](https://img.shields.io/badge/PostgreSQL-asyncpg-336791?logo=postgresql&logoColor=white)
-![mqtt](https://img.shields.io/badge/MQTT-aiomqtt-660066)
-![esp32](https://img.shields.io/badge/ESP32--S3-PlatformIO-E7352C)
+단순히 객체를 검출하는 데서 끝나지 않고, 서로 다른 카메라에서 검출된 객체를 ArUco Homography 기반 BEV 좌표계로 통합하고, Warning / Danger 판단, PostgreSQL 사고 로그 저장, 작업자별 위험 카운트, Redis 기반 비동기 리포트 생성, React 관리자 대시보드까지 연결한 E2E 프로젝트입니다.
 
----
+## Project Summary
 
-## 🎯 핵심 가치
+| 항목 | 내용 |
+| --- | --- |
+| 프로젝트명 | RPS: Multi-View Risk Prediction System |
+| 한 줄 설명 | 멀티뷰 RTSP 영상 기반 지게차-작업자-인양물 충돌 위험 예측 시스템 |
+| 개발 인원 | 1명 |
+| 핵심 역할 | Unity 시뮬레이션, RTSP 브릿지, YOLO/Pose 추론, Homography 좌표 변환, Fusion V1/V2 위험 예측, FastAPI 백엔드, PostgreSQL 인덱싱, Redis 비동기 리포트, React 대시보드 |
+| 주요 성과 | 추론 성능 `3.145 FPS -> 10.148 FPS`, frame 처리시간 `0.320s -> 0.099s`, Fusion V2 F1 `99.210%`, PostgreSQL 날짜 검색 p50 `0.097ms` |
 
-> **"위험은 놓치지 않으면서, 헛알람으로 작업을 방해하지 않는다."**
+## Tech Stack
 
-- ⚡ **실시간** : 5 Hz (200 ms) 주기 추론
-- 🎯 **정확도** : 운영 임계값 기준 헛알람 0건, 위험 99% 검출
-- 🔗 **멀티모달** : 영상 + 음향을 그래프 신경망(11K 파라미터)으로 융합
-- 📡 **양방향 IoT** : ESP32-S3 마이크 → 서버 / 서버 → ESP32 진동 모터
+| 영역 | 기술 |
+| --- | --- |
+| Simulation | Unity, C# Editor Tooling |
+| Streaming | FFmpeg, MediaMTX, RTSP |
+| Computer Vision | OpenCV, ArUco Marker, Homography, Ultralytics YOLO, YOLO-Pose |
+| AI / Fusion | PyTorch, GRU, MLP, Sliding Window, rule-based Fusion V1 |
+| Backend | FastAPI, Uvicorn, SQLAlchemy Async, asyncpg |
+| Async / Report | Redis Queue, Background Worker, Ollama, Qwen3 |
+| Database / Search | PostgreSQL, B-tree Composite Index, Elasticsearch 비교 실험 |
+| Frontend | React, Vite, TypeScript, Recharts, jsPDF, html-to-image |
 
----
+## System Architecture
 
-## 🏗 시스템 아키텍처
+아래 구조는 실제 CCTV RTSP 입력을 가정하되, 포트폴리오 검증 환경에서는 Unity에서 녹화한 cam1 / cam2 영상을 FFmpeg와 MediaMTX를 통해 RTSP 스트림으로 제공하도록 구성했습니다.
 
-```
-[Cam1 RTSP] ─┐                                 [ESP32-S3 mic]
-[Cam2 RTSP] ─┤                                       │
-              ▼                                       ▼ I2S → WS
-   YOLO11-pose + 커스텀(forklift,box)         /ws/audio (FastAPI)
-   ArUco 워커 식별 (W01/W02/W03)                       │
-   Homography → 월드 좌표 (m)                  YAMNet (centroid cos)
-              │                                       │
-              ▼                                       ▼ /audio/score
-   Pairwise Interaction Fusion Model  ◄────────  audio_score
-   (GCN + Temporal + Threat Branch ×2)
-              │
-              ▼
-   risk_matrix (worker × {forklift, dropzone})
-              │
-       cooldown 2s + 방향 결정 (heading 기반)
-              │
-      ┌───────┴────────┐
-      ▼                ▼
-  /send-alert     /incident-logs/with-snapshot
-      │                │
-      ▼                ▼
-  MQTT publish     PostgreSQL + USB JPEG
-      │                │
-  ESP32 진동       LLM 일일 리포트 → React 대시보드
+![System Architecture](assets/readme/system_architecture_infra.png)
+
+핵심 흐름은 다음과 같습니다.
+
+```text
+Unity Simulation
+  -> FFmpeg Publisher
+  -> MediaMTX RTSP Server
+  -> Backend Server
+      -> RTSP Stream Reader
+      -> YOLO-Pose / Custom YOLO
+      -> ArUco Homography
+      -> Fusion V1 / Fusion V2
+      -> PostgreSQL / MQTT / Redis Report Job
+  -> React Admin Dashboard
 ```
 
----
+역할을 분리하면 다음과 같습니다.
 
-## 🧩 주요 기능
+| 구성 요소 | 역할 |
+| --- | --- |
+| Unity Simulation | 사각지대, T자형 동선, 지게차, 작업자, 인양물 DropZone 시나리오 생성 |
+| FFmpeg | 녹화된 cam1 / cam2 프레임을 RTSP 스트림으로 publish |
+| MediaMTX | `rtsp://localhost:8554/cam1`, `rtsp://localhost:8554/cam2` 주소 제공 |
+| Backend Server | RTSP 수신, 프레임 추론, 좌표 변환, 위험 판단, 로그 저장 |
+| Uvicorn + FastAPI | 관리자 API, 사고 로그 조회, 작업자 통계, 리포트 생성 요청 처리 |
+| PostgreSQL | 사고 로그, 작업자, 리포트 데이터 저장 |
+| Redis Queue | 오래 걸리는 LLM 리포트 생성을 API 응답 흐름에서 분리 |
+| Ollama / Qwen3 | 날짜별 사고 로그 기반 안전 리포트 생성 |
+| React Dashboard | 작업자별 위험 카운트, 사고 snapshot, 리포트 조회 화면 제공 |
 
-| 영역 | 기능 | 위치 |
-|---|---|---|
-| **캘리브레이션** | ArUco 4코너로 카메라별 Homography 자동 계산 | `input/media/calibrate_homography.py` |
-| **객체 검출** | YOLO11-pose (사람) + 커스텀 YOLO (forklift, hoist) | `input/media/world_pipeline.py` |
-| **작업자 식별** | ArUco 마커 ID 5/10/15 → W01/W02/W03 | `input/media/world_pipeline.py` |
-| **멀티뷰 통합** | 두 카메라 좌표 평균 + cross-cam ID 흡수(1.5m) | `model/fusion/realtime_camera.py:pick_positions` |
-| **음향 이상 감지** | YAMNet 임베딩 + Centroid Cosine Similarity | `model/yamnet/detector.py` |
-| **위험 예측** | Pairwise Interaction Fusion Model (≈ 11K) | `model/fusion/model.py` |
-| **방향 결정** | 워커 heading 기반 4방향(back/left/right/all) 매핑 | `model/fusion/realtime_camera.py:resolve_direction` |
-| **알림 발송** | MQTT 진동 + DB IncidentLog 양방향 (cooldown 2s) | `model/fusion/publisher.py`, `db_logger.py` |
-| **일일 리포트** | Gemini / Ollama 로컬 LLM 이중 백엔드 | `server/report/` |
-| **대시보드** | React 19 + Recharts + jsPDF (PDF 다운로드) | `frontend/src/components/DailyAdminDashboard.tsx` |
+## End-to-End Flow
 
----
+1. Unity에서 공장 사각지대 충돌 시나리오를 만들고 cam1 / cam2 영상을 녹화합니다.
+2. FFmpeg가 녹화 프레임을 MediaMTX RTSP 서버에 publish합니다.
+3. Backend Server가 RTSP 스트림에서 cam1 / cam2 프레임을 읽습니다.
+4. YOLO-Pose로 작업자 keypoint를 검출하고, Custom YOLO로 지게차와 인양물을 검출합니다.
+5. 검출된 픽셀 좌표를 ArUco Homography로 BEV 절대좌표로 변환합니다.
+6. Fusion V1 또는 Fusion V2가 작업자, 지게차, 지게차 전방 FH 기준점, DropZone의 위험도를 계산합니다.
+7. 위험도가 기준을 넘으면 Warning / Danger 이벤트를 생성합니다.
+8. snapshot과 사고 로그를 PostgreSQL에 저장하고, 필요 시 MQTT 알림을 발행합니다.
+9. React 관리자 화면은 FastAPI를 통해 작업자별 위험 count, 사고 로그, 리포트를 조회합니다.
+10. 리포트 생성 요청은 Redis Queue에 등록되고, Report Worker가 Ollama를 호출해 결과를 PostgreSQL에 저장합니다.
 
-## 📐 시스템 통합 지표
+## Vision And Fusion Pipeline
 
-| 항목 | 값 |
-|---|---|
-| 작업공간 실측 | **2.22 m × 2.34 m** |
-| 캘리브레이션 재투영 오차 (cam1) | 평균 **5.12 × 10⁻⁸ m** |
-| 추론 주기 | **5 Hz (200 ms)** |
-| ESP32 오디오 chunk | 1024 samples / **64 ms** |
-| 음향 분석 윈도우 | **1.92 s** |
-| 알림 cooldown | **2.0 s** |
-| 드롭존 강제 격상 반경 | **0.5 m** |
-| forklift 정지 판정 | < 0.10 m/frame (≈ 0.5 m/s) |
-| Cross-cam worker 매칭 임계 | **1.5 m** |
+![Fusion V2 GRU Flow](assets/readme/fusion_v2_gru_window_flow.png)
 
----
+### Detection
 
-## 📊 모델 성능 지표
+| 모델 | 역할 | 사용 이유 |
+| --- | --- | --- |
+| YOLO-Pose | 작업자 검출 및 발목/하체 기준 위치 추정 | 사람의 bbox 중심보다 실제 바닥 접점에 가까운 좌표가 필요했기 때문 |
+| Custom YOLO | 지게차, box / DropZone 관련 객체 검출 | Unity 환경의 지게차와 인양물 형태가 일반 COCO 객체와 달라 별도 학습이 필요했기 때문 |
 
-> 단계별로 측정 / 보강 / 추가 갱신.
+### Coordinate Transform
 
-### ✅ 1단계 — 모델별 핵심 메트릭 *(완료)*
+카메라별 픽셀 좌표는 그대로 비교할 수 없기 때문에, ArUco Marker를 기준으로 Homography를 생성해 모든 객체를 동일한 BEV 절대좌표계로 변환했습니다.
 
-#### YOLO 객체 검출 (forklift, hoist)
-
-| 클래스 | Instances | Precision | Recall | mAP@50 |
-|---|---:|---:|---:|---:|
-| **전체** | 2,819 | **1.000** | 0.963 | 0.965 |
-| 지게차 | 1,704 | 1.000 | 1.000 | 0.989 |
-| 인양물(hoist) | 1,115 | 0.999 | 1.000 | 0.981 |
-
-- **Precision 1.000** → 검증셋 전체에서 헛검출 0건
-- 학습: `model/yolo/runs/detect/train4/`, 50 epoch
-- 가중치: `model/yolo/best_final.pt` (DVC 후보 — 5MB)
-
-#### YAMNet 음향 이상 감지 (줄 끊어짐)
-
-| 항목 | 값 |
-|---|---:|
-| Threshold (cosine sim) | **0.68** |
-| **CV-Test Recall (LOFO)** | **1.0** |
-| Recall | 0.95 |
-| Accuracy | 0.95 |
-| Embedding dim | 1024 |
-| 학습 frame | 572 (636 → 하위 10% outlier 제거) |
-| 데이터셋 | 24 anomaly wav + 51 normal wav |
-
-- 설정 파일: `model/yamnet/anomaly_config.json`
-- Centroid: `model/yamnet/anomaly_centroid.npy`
-
-#### Pairwise Interaction Fusion Model
-
-학습: 합성 24 시나리오, 71 epoch (EarlyStopping), BCE loss, ≈ 11K params
-
-##### Forklift best ckpt (`best_forklift.pt`, epoch 56)
-
-| Class | Precision | Recall | F1 | Support |
-|---|---:|---:|---:|---:|
-| safe | 0.914 | 1.000 | 0.955 | 393 |
-| warn | 0.966 | 0.431 | 0.596 | 65 |
-| **danger** | **1.000** | **0.955** | **0.977** | 22 |
-| Macro F1 | | | **0.842** | |
-
-##### Dropzone best ckpt (`best_dropzone.pt`, epoch 12)
-
-| Class | Precision | Recall | F1 | Support |
-|---|---:|---:|---:|---:|
-| safe | 1.000 | 1.000 | 1.000 | 288 |
-| warn | 0.979 | 0.561 | 0.713 | 82 |
-| **danger** | 0.752 | **0.991** | **0.855** | 110 |
-| Macro F1 | | | **0.856** | |
-
-##### 운영 임계값 (DANGER ≥ 0.8) 기준
-
-| 위협 | Precision | Recall | 한 줄 평가 |
-|---|---:|---:|---|
-| Forklift | **1.000** | 0.955 | 헛알람 0건, 위험 95% 검출 |
-| Dropzone | 0.752 | **0.991** | 위험 99% 검출, 알림 100% 발송 |
-
-#### 한눈 요약 표
-
-| 모델 | 핵심 지표 | 값 |
-|---|---|---:|
-| YAMNet anomaly | CV recall (LOFO) | **1.0** |
-| YOLO forklift/hoist | Precision / mAP@50 | **1.000 / 0.965** |
-| Fusion forklift | Danger F1 | **0.977** |
-| Fusion dropzone | Danger Recall | **0.991** |
-| Calibration | 재투영 오차 평균 | **5.12 × 10⁻⁸ m** |
-
----
-
-### ⏳ 2단계 — 프레임 처리 속도 측정 *(예정)*
-
-`realtime_camera.py` 메인 루프의 단계별 latency 실측.
-
-- [ ] 단계별 timer 박기 (`time.perf_counter()`)
-- [ ] 100 프레임 누적 후 mean / p50 / p95 / p99 통계
-- [ ] CSV 저장 + matplotlib 분포 시각화
-- [ ] 병목 식별 → 다음 최적화 방향 결정
-
-##### 측정 대상 단계
-
-| 단계 | 내용 | 예상 latency |
-|---|---|---|
-| ① cam.read() | RTSP 프레임 수신 | I/O 의존 |
-| ② extract_detections_with_world ×2 | YOLO + ArUco + homography | 50~150 ms (예상) |
-| ③ pick_positions | 두 카메라 통합 | < 5 ms |
-| ④ tracker.predict | Fusion 추론 | < 5 ms |
-| ⑤ 시각화 (BEV + overlay) | cv2 draw + imshow | 20~40 ms |
-
-> 결과 추가 예정: `tools/benchmark_pipeline.py` 실행 후 갱신
-
----
-
-### ⏳ 3단계 — Docker 컨테이너화 *(예정)*
-
-- [ ] `requirements.txt` 추출 (environment.yml의 pip 부분)
-- [ ] `Dockerfile.backend` (FastAPI + fusion subprocess)
-- [ ] `Dockerfile.frontend` (Vite build → nginx)
-- [ ] `docker-compose.yml` (postgres + mosquitto + backend + frontend)
-- [ ] 모델 가중치 volume mount 정책
-- [ ] 환경변수 템플릿 (`.env.example`)
-
-##### 멀티 컨테이너 구조
-
-```
-docker-compose.yml
-├── backend     (FastAPI + fusion subprocess)
-├── frontend    (Vite → nginx)
-├── postgres    (postgres:16-alpine)
-└── mosquitto   (eclipse-mosquitto)
+```text
+cam1 pixel coordinate
+cam2 pixel coordinate
+        |
+        v
+ArUco Homography
+        |
+        v
+BEV absolute coordinate
 ```
 
----
+### Fusion V1
 
-### ⏳ 4단계 — CI/CD 자동화 *(예정)*
+Fusion V1은 딥러닝 모델이 아니라 규칙 기반 위험 판단 로직입니다. 작업자와 지게차의 거리, 속도, 진행 방향, TTC, 지게차 전방 FH 기준점, DropZone 반경을 이용해 Warning / Danger를 계산합니다.
 
-- [ ] **Phase A** : GitHub Actions로 lint + sanity check (즉시)
-- [ ] **Phase B** : Docker 이미지 빌드 + GHCR push
-- [ ] **Phase C** : 서버 자동 배포 (SSH or Watchtower)
+```text
+BEV coordinates
+  -> distance / velocity / TTC / FH point
+  -> rule-based score
+  -> SAFE / WARNING / DANGER
+```
 
----
+### Fusion V2
 
-## 🛠 설치 및 실행
+Fusion V2는 최근 24프레임의 좌표 feature sequence를 입력받는 GRU 기반 위험 예측 모델입니다. 프레임마다 생성된 23차원 feature vector를 24개 누적해 하나의 sliding window로 만들고, GRU와 MLP Head를 거쳐 지게차 충돌 위험과 DropZone 위험 확률을 반환합니다.
 
-### 1. 환경 준비
+```text
+24-frame window
+  -> Normalize
+  -> Linear(23 -> 96)
+  -> GRU(2-layer, hidden=96)
+  -> MLP Head(96 -> 48 -> 2)
+  -> Sigmoid
+  -> forklift_prob, dropzone_prob
+```
+
+| 점수 범위 | 결과 |
+| --- | --- |
+| `score < 0.4` | SAFE |
+| `0.4 <= score < 0.8` | WARNING |
+| `0.8 <= score` | DANGER |
+
+## Demo
+
+최종 검증은 Unity에서 만든 3개의 지게차-작업자 시나리오와 1개의 인양물 DropZone 시나리오로 진행했습니다. 아래 GIF는 GitHub README에서 바로 확인할 수 있도록 원본 mp4를 압축한 결과입니다.
+
+| 시나리오 | 검증용 입력 | 모델 적용 결과 |
+| --- | --- | --- |
+| Scenario 01<br>사용자 커스텀 배치 기반 충돌 위험 | ![scenario 01 validation](assets/readme/gifs/scenario_01_validation.gif) | ![scenario 01 result](assets/readme/gifs/scenario_01_result.gif) |
+| Scenario 02<br>작업자/지게차 위치 반대 구도 | ![scenario 02 validation](assets/readme/gifs/scenario_02_validation.gif) | ![scenario 02 result](assets/readme/gifs/scenario_02_result.gif) |
+| Scenario 03<br>반대 방향 접근 구도 | ![scenario 03 validation](assets/readme/gifs/scenario_03_validation.gif) | ![scenario 03 result](assets/readme/gifs/scenario_03_result.gif) |
+
+### Fusion V1 / V2 Comparison
+
+| 모델 | 결과 GIF | 설명 |
+| --- | --- | --- |
+| Fusion V1 | ![Fusion V1 scenario 01](assets/readme/gifs/fusion_v1_scenario_01.gif) | 거리, TTC, FH 기준점, DropZone 조건을 조합해 위험을 판단하는 규칙 기반 방식 |
+| Fusion V2 | ![Fusion V2 scenario 01](assets/readme/gifs/fusion_v2_scenario_01.gif) | 최근 24프레임의 BEV 좌표 시계열을 학습해 위험 확률을 예측하는 GRU 기반 방식 |
+
+## Model Metrics
+
+| Model | Accuracy | Precision | Recall | F1 |
+| --- | ---: | ---: | ---: | ---: |
+| Custom YOLO | 97.721% | 96.449% | 97.123% | 96.785% |
+| YOLO-Pose worker detection | 98.333% | 100.000% | 99.167% | 99.582% |
+| Fusion V1 overall | 92.188% | 93.499% | 82.287% | 84.927% |
+| Fusion V2 combined danger | 99.696% | 99.119% | 99.301% | 99.210% |
+| Fusion V2 forklift danger | 99.683% | 98.126% | 98.919% | 98.521% |
+| Fusion V2 dropzone danger | 99.708% | 99.504% | 99.448% | 99.476% |
+
+Fusion V2 학습 데이터는 실제 Unity 녹화 시나리오 7개와, SAFE / WARNING / DANGER 상황이 균형 있게 포함되도록 절대좌표 기반으로 절차적 생성한 synthetic 시나리오 450개를 결합해 구성했습니다. synthetic 데이터는 단순 무작위 좌표가 아니라, 충돌, 근접, DropZone 접근 패턴을 먼저 정의한 뒤 시작점과 이동 경로에 랜덤 변형을 적용해 생성했습니다.
+
+상세 자료:
+
+- [Fusion V2 README](model/fusion_v2/README.md)
+- [Model metrics and fusion structure](assets/readme/model_metrics_and_fusion_structure.md)
+
+## Performance Improvement
+
+초기 구조는 cam1 pose, cam2 pose, custom YOLO, fusion 계산이 대부분 한 루프 안에서 순차 실행되어 평균 약 `3.145 FPS`, frame당 약 `0.320s` 수준이었습니다. 이후 카메라 단위 병렬 처리, 모델 단위 병렬 처리, 입력 이미지 크기 조정, pose skip/cache를 적용해 최대 약 `10.148 FPS`까지 개선했습니다.
+
+최종 설정:
 
 ```bash
-git clone <repo-url>
-cd ai_project
+DETECTION_PARALLEL_MODE=model_parallel
+POSE_IMGSZ=640
+CUSTOM_IMGSZ=512
+POSE_EVERY_N_FRAMES=2
+```
 
-# Conda 환경 생성
-conda env create -f environment.yml
+| 단계 | 내용 | FPS | 직전 대비 FPS 향상 | 1 frame 처리시간 | 직전 대비 처리시간 감소 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 0 | 초기 serial 처리 | 3.145 FPS | - | 0.320s | - |
+| 1 | 카메라별 병렬 처리 | 5.488 FPS | +74.5% | 0.183s | 43.0% 감소 |
+| 2 | 모델별 병렬 처리 | 6.335 FPS | +15.4% | 0.158s | 13.5% 감소 |
+| 3 | Custom YOLO 이미지 크기 `640 -> 512` | 7.364 FPS | +16.2% | 0.136s | 14.2% 감소 |
+| 4 | Pose 2프레임 1회 추론 + cache 재사용 | 10.148 FPS | +37.8% | 0.099s | 27.0% 감소 |
+
+최종적으로 초기 대비 FPS는 약 `222.7%` 향상되었고, frame 처리 시간은 약 `69.1%` 감소했습니다.
+
+## Backend Improvements
+
+### PostgreSQL Indexing
+
+사고 로그가 늘어날수록 관리자 화면의 날짜별 조회 성능이 중요해졌습니다. Elasticsearch를 모든 검색에 적용하는 방식도 검토했지만, 날짜/작업자/위험유형처럼 구조화된 조건 조회는 PostgreSQL 복합 인덱스가 더 적합했습니다.
+
+적용 인덱스:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_incident_logs_date_created_id
+ON incident_logs (date, created_at DESC, id DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_incident_logs_date_type_worker_created_id
+ON incident_logs (date, incident_type, worker_id, created_at DESC, id DESC);
+```
+
+검증 조건:
+
+| 항목 | 값 |
+| --- | ---: |
+| 전체 사고 로그 | 300,391건 |
+| mock 데이터 | 300,000건 |
+| 날짜 종류 | 1,000개 |
+| 날짜별 데이터 | 약 300건 |
+| 삽입 방식 | 날짜 순서가 아닌 랜덤 셔플 |
+
+| 검색 유형 | 방식 | 평균 | p50 | p95 | 결론 |
+| --- | --- | ---: | ---: | ---: | --- |
+| 날짜 컬럼 필터 | PostgreSQL Index | 0.480ms | 0.097ms | 0.660ms | 구조화 날짜 검색에 가장 적합 |
+| 날짜 컬럼 필터 | Elasticsearch Filter | 5.376ms | 4.528ms | 7.960ms | 날짜만 찾기에는 오버헤드가 큼 |
+| snapshot_path 문자열 검색 | PostgreSQL ILIKE | 99.146ms | 97.764ms | 105.804ms | 전체 문자열 탐색 비용 큼 |
+| snapshot_path 문자열 검색 | Elasticsearch | 13.200ms | 8.577ms | 23.024ms | 부분 문자열 검색에 유리 |
+
+정리하면 날짜 기반 조회는 PostgreSQL 복합 인덱스로 처리하고, snapshot path나 키워드 기반 검색은 Elasticsearch read model을 사용하는 방식이 적합하다고 판단했습니다.
+
+### Redis Background Job
+
+리포트 생성 API는 Ollama 응답을 기다려야 하므로 요청 시간이 길어질 수 있습니다. 이를 해결하기 위해 Redis를 단순 캐시가 아니라 Background Job Queue로 활용했습니다.
+
+```text
+React
+  -> POST /reports/generate-async
+  -> FastAPI registers job in Redis
+  -> immediate job_id response
+  -> Report Worker consumes job
+  -> Ollama generates report
+  -> PostgreSQL stores report
+  -> React polls /jobs/{job_id}
+```
+
+| 항목 | 개선 전 | 개선 후 | 개선 효과 |
+| --- | ---: | ---: | ---: |
+| 리포트 생성 API 응답 | Ollama 생성 완료까지 약 71초 대기 | Redis job 등록 후 즉시 `job_id` 반환 | 긴 작업을 API 응답 경로에서 분리 |
+| 리포트 목록 응답 크기 | 97,761 bytes | 729 bytes | 약 99.25% 감소 |
+
+## Main API
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| GET | `/workers` | 작업자 목록 및 누적 위험 count |
+| GET | `/incident-logs/summary?target_date=YYYY-MM-DD` | 날짜별 작업자 위험 요약 |
+| GET | `/incident-logs/search/postgres` | PostgreSQL 기반 사고 로그 검색 |
+| GET | `/incident-logs/search/elasticsearch` | Elasticsearch 기반 사고 로그 검색 |
+| POST | `/incident-logs/with-snapshot` | snapshot 업로드 + 사고 로그 저장 |
+| GET | `/images/serve?path=...` | 저장된 snapshot 이미지 서빙 |
+| POST | `/reports/generate` | 동기 리포트 생성 |
+| POST | `/reports/generate-async` | Redis background report job 생성 |
+| GET | `/jobs/{job_id}` | background job 상태 조회 |
+| GET | `/reports/summary` | 리포트 목록 경량 조회 |
+| GET | `/reports/{report_id}` | 리포트 상세 HTML 조회 |
+
+## Runbook
+
+### 1. Environment
+
+```bash
+cd /Users/haechan/Desktop/pobiga/ai/ai_project
 conda activate venv
-
-# Frontend 의존성
-cd frontend && npm install && cd ..
 ```
 
-### 2. 환경변수 (`.env`)
+### 2. Homography Calibration
 
 ```bash
-# 카메라
-CAMERA_RTSP_URL_1=rtsp://user:pass@192.168.0.10:554/stream2
-CAMERA_RTSP_URL_2=rtsp://user:pass@192.168.0.11:554/stream2
-
-# 데이터베이스
-DATABASE_URL=postgresql+asyncpg://user:pass@127.0.0.1:5432/safety
-
-# MQTT
-MQTT_BROKER=127.0.0.1
-
-# LLM
-LLM_BACKEND=gemini      # 또는 local
-GEMINI_API_KEY=...
-OLLAMA_HOST=http://localhost:11434
-LOCAL_LLM_MODEL=qwen3:8b
-
-# 저장소
-USB_STORE_PATH=/Volumes/USB
-LOCAL_SNAPSHOT_PATH=./snapshots
-
-# 서버
-SERVER_PORT=1122
-
-# YOLO 커스텀 모델
-BEST_MODEL_PATH=model/yolo/best_final.pt
-```
-
-### 3. 캘리브레이션 (최초 1회)
-
-```bash
-# 각 카메라로 작업공간 코너 ArUco(22, 24, 27, 38)가 보이는 스냅샷 촬영 후
 python input/media/calibrate_homography.py --cam cam1 --image calibration/test_cam1.jpg
 python input/media/calibrate_homography.py --cam cam2 --image calibration/test_cam2.jpg
-
-# 검증 (격자 오버레이 시각 확인)
-python input/media/verify_homography.py --cam cam1 --image calibration/test_cam1.jpg
 ```
 
-### 4. 모델 학습 (선택)
+### 3. RTSP Bridge
+
+Terminal A:
 
 ```bash
-# Fusion 모델 학습 (≈ 5분)
-python model/fusion/train.py
-# → model/fusion/checkpoints/{best, best_forklift, best_dropzone}.pt 생성
+mediamtx
 ```
 
-#### 학습 데이터셋 (DVC 관리)
-
-YAMNet 학습 데이터셋(`model/yamnet/dataset/`, 102 wav, 13MB)은 **DVC**로 관리합니다.
-git clone 직후엔 `dataset.dvc` 만 받고 실제 wav 는 비어있으니 `dvc pull` 필요:
+Terminal B:
 
 ```bash
-# 데이터셋 받기 (협업 시 / 새 환경 셋업 시)
-dvc pull
-
-# 데이터셋 변경 후 다시 추적
-dvc add model/yamnet/dataset
-dvc push
-git add model/yamnet/dataset.dvc
-git commit -m "data: update yamnet dataset"
+python input/media/tools/stream_collision_scenario_rtsp.py \
+  --scenario scenario_01_user_current \
+  --rtsp-base rtsp://localhost:8554
 ```
 
-> 기본 remote 는 로컬(`~/dvc-storage`). 협업 시 S3 / GDrive 등으로 마이그레이션 가능:
-> `dvc remote add -d s3 s3://bucket/path`
-
-### 5. 서버 + 파이프라인 실행
+### 4. Realtime Fusion Pipeline
 
 ```bash
-# 한 번에 전체 시스템 기동 (FastAPI + fusion subprocess + MQTT 큐)
-python -m server.main
+HEADLESS=1 \
+CAMERA_RTSP_URL_1=rtsp://localhost:8554/cam1 \
+CAMERA_RTSP_URL_2=rtsp://localhost:8554/cam2 \
+FUSION_SERVER_URL=http://127.0.0.1:1122 \
+MQTT_BROKER=127.0.0.1 \
+LOCAL_SNAPSHOT_PATH=/Users/haechan/Desktop/pobiga/ai/ai_project/snapshots \
+DETECTION_PARALLEL_MODE=model_parallel \
+POSE_IMGSZ=640 \
+CUSTOM_IMGSZ=512 \
+POSE_EVERY_N_FRAMES=2 \
+python -m model.fusion.runtime.realtime_camera \
+  --no-audio \
+  --no-prompt \
+  --duration 60 \
+  --run-label demo_run \
+  --metrics-path metrics/demo_run.jsonl
+```
 
-# 또는 fusion 파이프라인만 단독 실행
-python model/fusion/realtime_camera.py
+### 5. FastAPI Backend
+
+API만 확인할 때는 Fusion subprocess를 끄고 실행할 수 있습니다.
+
+```bash
+DISABLE_FUSION_SUBPROCESS=1 \
+DISABLE_REDIS_JOBS=1 \
+conda run -n venv uvicorn server.main:app --host 127.0.0.1 --port 1122
 ```
 
 ### 6. Frontend
 
 ```bash
 cd frontend
-npm run dev          # 개발 모드 (vite proxy → :1122)
-# 또는
-npm run build && npm run preview
+npm install
+npm run dev
 ```
 
-### 7. ESP32 펌웨어
+Production build:
 
 ```bash
-cd firmware/esp32_audio_ws
-pio run -t upload
-pio device monitor
+npm run build
 ```
 
----
+## Verification
 
-## 📁 디렉토리 구조
+현재 구현 기준으로 다음 항목을 점검했습니다.
 
-```
+| 점검 항목 | 결과 |
+| --- | --- |
+| Python 정적 컴파일 | `conda run -n venv python -m compileall -q server input/media model/fusion/runtime` 통과 |
+| Frontend production build | `npm run build` 통과 |
+| FastAPI health | `GET /` 정상 응답 |
+| Workers API | `GET /workers` 정상 응답, worker `1`, `2` 반환 |
+| 날짜별 사고 요약 | `GET /incident-logs/summary?target_date=2026-05-26` 정상 응답 |
+| 리포트 경량 목록 | `GET /reports/summary?limit=5` 정상 응답 |
+| Snapshot serving | `GET /images/serve?...` -> `200 image/jpeg` 확인 |
+
+로컬 검증 시점의 `2026-05-26` 사고 요약:
+
+| 항목 | 값 |
+| --- | ---: |
+| 전체 로그 | 307 |
+| Warning | 223 |
+| Danger | 84 |
+| Worker 1 | 73 |
+| Worker 2 | 234 |
+
+## Directory Map
+
+```text
 ai_project/
-├── calibration/                       # 카메라별 H 행렬 + ArUco 실측 좌표
-│   ├── world_markers.json
-│   └── cam{1,2}_homography.json
-│
-├── firmware/esp32_audio_ws/           # ESP32-S3 PlatformIO 프로젝트
-│
-├── frontend/                          # React 19 + Vite + Tailwind
-│   └── src/components/
-│
-├── input/
-│   ├── audio/                         # ESP32 audio WebSocket
-│   └── media/                         # 미디어 파이프라인
-│       ├── camera.py                  ⭐ RTSP 스트림 (VideoStream)
-│       ├── world_mapper.py            ⭐ 픽셀 → 월드 좌표
-│       ├── calibrate_homography.py    ⭐ H 행렬 생성
-│       ├── pipeline/                  ⭐ DetectionPipeline 통합 모듈
-│       │   ├── engine.py              (DetectionPipeline 클래스)
-│       │   ├── runner.py              (run_image / run_live / main)
-│       │   ├── visualization.py
-│       │   ├── calibration_runtime.py
-│       │   └── constants.py
-│       ├── tools/                     디버깅 도구 (identify_markers / show_dual_cam / verify_homography)
-│       └── test/                      격리 테스트 (test_cam, test_worker_id)
-│
-├── model/
-│   ├── fusion/                        ⭐ Pairwise Interaction Fusion
-│   │   ├── model.py                   (PairwiseInteractionFusionModel)
-│   │   ├── inference.py               (RealtimeInference)
-│   │   ├── risk_output.py             (FusionPrediction / ThreatType)
-│   │   ├── graph_input.py             (Scenario → 텐서)
-│   │   ├── data/                      (scenario_generator / scenarios_synthetic / pair_labels)
-│   │   ├── training/                  (dataset / train / train_with_history / plot_*)
-│   │   ├── runtime/                   (realtime_camera / publisher / db_logger)
-│   │   └── checkpoints/best*.pt
-│   │
-│   ├── yamnet/                        ⭐ 음향 이상 감지
-│   │   ├── detector.py                (YamnetDetector — 운영 외부 import)
-│   │   ├── anomaly_centroid.npy / anomaly_config.json
-│   │   ├── data_prep/                 (record / convert / organize)
-│   │   ├── tools/                     (realtime_detect / test_with_wav)
-│   │   ├── notebooks/                 (yamnet_transfer_learning.ipynb)
-│   │   ├── dataset.dvc                (DVC 메타 — 학습 wav 102개 / 13MB)
-│   │   └── dataset/                   (DVC 관리, .gitignore)
-│   │
-│   └── yolo/                          ⭐ 커스텀 YOLO (forklift / box_1 / box_2)
-│       ├── best_final.pt              (운영 모델 — .env BEST_MODEL_PATH)
-│       ├── data.yaml / custom_botsort.yaml
-│       ├── notebooks/                 (학습 노트북 6개)
-│       └── runs/detect/{train4, train13}
-│
-├── server/                            # FastAPI 백엔드
-│   ├── main.py                        (lifespan 에서 fusion subprocess spawn)
-│   ├── database/                      (SQLAlchemy + USB 저장)
-│   ├── pipeline/mqtt/                 (aiomqtt handler)
-│   └── report/                        (Gemini / Ollama 리포트)
-│
-├── .dvc/                              # DVC 메타 (cache / config)
-├── .dvcignore
-├── ~/dvc-storage/                     # DVC 로컬 remote (사용자 홈)
-│
-├── environment.yml                    # conda venv 정의
-├── ROADMAP.md                         # 5축 향후 계획
-└── README.md
+├── assets/readme/                 # README/포트폴리오 이미지, GIF
+├── calibration/                   # cam1/cam2 homography, marker world coords
+├── docs/                          # 실험/성능/이슈 문서
+├── frontend/                      # React + Vite dashboard
+├── input/media/                   # RTSP bridge, calibration, detection pipeline
+├── metrics/                       # FPS/API/search benchmark 결과
+├── model/fusion/runtime/          # Fusion V1 realtime runtime
+├── model/fusion_v2/               # GRU 기반 Fusion V2
+├── model/yolo/                    # custom YOLO weights and runs
+├── server/                        # FastAPI backend, DB, jobs, report, search
+├── simulation/                    # Unity project and recordings
+└── snapshots/                     # 위험 상황 snapshot 저장소
 ```
 
----
+## Known Limits
 
-## 🔬 모델 카드 요약
+- worker `1`, `2`는 실제 사번/생체 식별이 아니라 시뮬레이션 기반 익명 작업자 ID입니다.
+- Unity 녹화 영상은 실제 CCTV를 대체한 검증용 입력이며, 운영 환경에서는 CCTV RTSP 주소를 직접 연결하는 구조로 확장할 수 있습니다.
+- Fusion V2는 BEV 좌표 시계열 기반 모델이므로, 앞단의 검출 품질과 Homography 정확도에 영향을 받습니다.
+- mock 사고 로그 중 일부는 실제 snapshot 파일이 없을 수 있으므로, 프론트는 존재하는 이미지 파일만 렌더링합니다.
+- Elasticsearch는 날짜 컬럼 필터의 대체재가 아니라 snapshot path / 키워드 / 부분 문자열 검색용 read model로 사용하는 것이 적합합니다.
 
-| 모델 | 입력 | 출력 | 학습 데이터 | 위치 |
-|---|---|---|---|---|
-| YOLO11-pose | 카메라 frame | person bbox + 17 keypoints | 사전학습 (COCO) | 동적 다운로드 |
-| YOLO custom | 카메라 frame | forklift / box_1 / box_2 bbox | forklift_night_4.16 (50 epoch) | `model/yolo/best_final.pt` |
-| YAMNet + Centroid | 1.92s 16kHz mono PCM | (max_sim, is_anomaly) | 24 anomaly + 51 normal wav (DVC) | `model/yamnet/` |
-| Pairwise Fusion | (B, V=3, T=5, F=8) + adj + scene | risk_matrix (B, N, K=2) | 합성 24 시나리오 | `model/fusion/checkpoints/` |
+## Portfolio Sentence
 
----
-
-## 🎬 데모 시나리오
-
-```
-1. 워커 W01 이 작업공간 진입 → ArUco 마커로 즉시 식별
-2. 지게차가 W01 좌측에서 접근 → 5Hz 추론 → forklift risk 0.85
-3. resolve_direction(): worker heading=π/2, 위협 위치 → "left"
-4. cooldown 통과 → MQTT publish: forklift/4/vibration  payload="left"
-5. ESP32 좌측 진동 모터 작동 → W01에 "왼쪽 주의" 신호
-6. PostgreSQL IncidentLog 행 + 스냅샷 저장
-7. 일일 LLM 리포트에 자동 요약 → 대시보드 PDF 다운로드
-```
-
----
-
-## 🗺 향후 계획
-
-상세 로드맵은 별도 문서로 분리했습니다 → **[ROADMAP.md](./ROADMAP.md)**
-
-### 5축 요약
-
-| 축 | 핵심 한 방 | 우선 액션 |
-|---|---|---|
-| ① **정확도** | Unity 가상 영상으로 데이터 다양화 | warn 라벨 보강, per-pair 분리 운영 |
-| ② **반응속도** | multiprocessing + ONNX 가속 | FPS 실측 → 병목 식별 |
-| ③ **안정성** | Health check + 통합 로깅 | `/health` 엔드포인트 |
-| ④ **확장성** | 카메라 / 워커 config 동적화 | YAML 기반 멀티 카메라 |
-| ⑤ **차별화** | Pairwise Fusion 논문화 + Uncertainty | per-pair + TTC 출력 |
-
-### 단기 처리 우선순위 TOP 5
-
-```
-1. B1.    FPS 실측              ⏰ 2시간   → 다음 결정 근거
-2. F-4.2  per-pair 분리 운영    ⏰ 4시간   → Fusion Macro F1 +0.08
-3. C1.    Health check          ⏰ 2시간   → 모니터링 기반
-4. F-4.1  PR curve threshold    ⏰ 4시간   → 운영 정확도 ↑
-5. F-5.1  analyze_fusion.py     ⏰ 4시간   → 모델 디버깅 기반
-```
-
-### Fusion 모델 심화 점검
-
-[ROADMAP.md](./ROADMAP.md) 의 "🎯 Fusion 모델 전용 심화 점검" 섹션 참조.
-학습 데이터 / 모델 구조 / 학습 전략 / 운영 / 검증 5개 영역에서 **24개 구체 점검 항목** 정의.
-
----
-
-## 📜 라이선스 / 기여
-
-> 라이선스 / 기여 가이드 추후 추가.
-
----
-
-## 📌 변경 이력
-
-| 날짜 | 단계 | 내용 |
-|---|---|---|
-| Init | 1단계 | YOLO / YAMNet / Fusion 메트릭 측정 완료, README 초기화 |
+멀티뷰 RTSP 영상에서 작업자, 지게차, 인양물을 검출하고 ArUco Homography로 BEV 절대좌표를 통합한 뒤, 규칙 기반 Fusion V1과 GRU 기반 Fusion V2로 Warning / Danger 위험을 예측하며 PostgreSQL 로그 저장, Redis 비동기 리포트 생성, React 관리자 대시보드까지 연결한 백엔드 중심 AI 안전 모니터링 시스템입니다.

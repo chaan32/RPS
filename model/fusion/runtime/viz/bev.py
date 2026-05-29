@@ -16,7 +16,7 @@ from .korean_text import put_korean
 from .camera_overlay import _risk_color
 
 
-DEFAULT_VIEW_BOUNDS = ((-9.5, 3.0), (-4.5, 7.0))
+DEFAULT_VIEW_BOUNDS = ((-11.0, 4.0), (-5.0, 9.5))
 DEFAULT_ARUCO_BOUNDS = ((-5.0, 0.0), (0.0, 5.0))
 
 
@@ -24,6 +24,7 @@ def render_bev(
     workers_xy, forklift_xy, audio_score, risks_per_worker,
     threshold=DEFAULT_THRESHOLD,
     dropzone_xy=None, dropzone_radius=None,
+    forklift_hazard_xy=None,
     worker_headings=None,                      # dict {wid: heading_radians}
     early_warnings=None,                       # dict {wid: EarlyWarning}
     view_bounds=DEFAULT_VIEW_BOUNDS,
@@ -36,8 +37,8 @@ def render_bev(
       workers_xy: dict {wid: (x, y)}
       risks_per_worker: dict {wid: (1, 2) ndarray}
     """
-    (x_min, x_max), (y_min, y_max) = view_bounds
     (ax_min, ax_max), (ay_min, ay_max) = aruco_bounds
+    (x_min, x_max), (y_min, y_max) = view_bounds
     W = int((x_max - x_min) * scale_px) + 200    # +200: 우측 패널 공간
     H = int((y_max - y_min) * scale_px) + 100
     img = np.full((H, W, 3), 245, dtype=np.uint8)
@@ -151,6 +152,16 @@ def render_bev(
                       (fpx[0] + 15, fpx[1] + 10), (0, 0, 200), -1)
         cv2.putText(img, "F", (fpx[0] - 5, fpx[1] + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        if forklift_hazard_xy is not None:
+            hpx = w2px(*forklift_hazard_xy)
+            if math.hypot(hpx[0] - fpx[0], hpx[1] - fpx[1]) > 2:
+                cv2.arrowedLine(img, fpx, hpx, (0, 0, 255), 3,
+                                tipLength=0.35, line_type=cv2.LINE_AA)
+            cv2.circle(img, hpx, 9, (0, 0, 255), -1)
+            cv2.circle(img, hpx, 9, (255, 255, 255), 1)
+            cv2.putText(img, "FH", (hpx[0] + 8, hpx[1] - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 180), 2)
 
     # ── Risk 패널 (오른쪽, per-worker rows) ──
     panel_x = W - 200

@@ -1,0 +1,10 @@
+rtspAddress: :8555
+rtspTransports: [tcp]
+rtpAddress: :8002
+rtcpAddress: :8003
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+paths:
+  all_others:

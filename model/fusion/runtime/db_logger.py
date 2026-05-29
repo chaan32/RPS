@@ -19,19 +19,12 @@ from datetime import datetime
 
 import httpx
 
-from ..risk_output import PairRisk, RiskLevel, ThreatType
+from ..risk_output import PairRisk, RiskLevel
+from .worker_ids import worker_label_to_int
 
 
 # ── 설정 ────────────────────────────────────────────────
 DEFAULT_SERVER_URL = os.getenv("FUSION_SERVER_URL", "http://127.0.0.1:1122")
-
-# 위협 타입 → DB 의 maker_id (FK to makers).
-# 펌웨어가 forklift/4/vibration 만 구독하므로 둘 다 maker_id=4 로 묶음.
-DEFAULT_THREAT_TO_MAKER_ID = {
-    ThreatType.FORKLIFT: 4,
-    ThreatType.DROPZONE: 4,
-}
-
 
 def _incident_type_for(level: RiskLevel) -> str:
     """RiskLevel → IncidentLog.incident_type ('Warning' or 'Danger')."""
@@ -52,7 +45,6 @@ async def log_pair(
     pair: PairRisk,
     server_url: str = DEFAULT_SERVER_URL,
     snapshot_path: str | None = None,
-    threat_to_maker_id: dict[ThreatType, int] | None = None,
     timeout: float = 5.0,
 ) -> dict:
     """
@@ -61,9 +53,8 @@ async def log_pair(
     Returns:
       서버 응답 dict, 또는 {"status": "fail", "error": ...}
     """
-    t2m = threat_to_maker_id or DEFAULT_THREAT_TO_MAKER_ID
     body = {
-        "maker_id": t2m.get(pair.threat_type, 4),
+        "worker_id": worker_label_to_int(pair.worker_id),
         "incident_type": _incident_type_for(pair.level),
         "snapshot_path": snapshot_path or _placeholder_snapshot_path(pair),
         "status": "success",
@@ -94,7 +85,6 @@ async def log_pair_with_snapshot(
     pair: PairRisk,
     frame_jpeg: bytes,
     server_url: str = DEFAULT_SERVER_URL,
-    threat_to_maker_id: dict[ThreatType, int] | None = None,
     timeout: float = 10.0,
 ) -> dict:
     """
@@ -105,14 +95,13 @@ async def log_pair_with_snapshot(
     Args:
       frame_jpeg : cv2.imencode('.jpg', frame)[1].tobytes() 결과 바이트
     """
-    t2m = threat_to_maker_id or DEFAULT_THREAT_TO_MAKER_ID
-    maker_id = t2m.get(pair.threat_type, 4)
+    worker_id = worker_label_to_int(pair.worker_id)
     incident_type = _incident_type_for(pair.level)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     filename = f"realtime_{pair.threat_type.value}_{ts}.jpg"
 
     url = f"{server_url}/incident-logs/with-snapshot"
-    params = {"maker_id": maker_id, "incident_type": incident_type}
+    params = {"worker_id": worker_id, "incident_type": incident_type}
     files = {"file": (filename, frame_jpeg, "image/jpeg")}
 
     try:

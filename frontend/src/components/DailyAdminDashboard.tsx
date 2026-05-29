@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
@@ -22,8 +22,16 @@ import {
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
-import { fetchReports, generateReport, sendAlert } from '../api';
-import type { Report } from '../api';
+import {
+  fetchIncidentSummary,
+  fetchJobStatus,
+  fetchReport,
+  fetchReportSummaries,
+  fetchWorkers,
+  generateReportAsync,
+  sendAlert,
+} from '../api';
+import type { IncidentLogSummary, ReportSummary, Worker } from '../api';
 
 // === Mock Data ===
 const USE_MOCK_DATA = false;
@@ -68,50 +76,141 @@ const lineChartData = [
   { time: '18:00', count: 0 },
 ];
 
-const initialProfiles = [
-  { id: 1, name: "작업자 1", score: 85, violations: ["크레인 드롭존 침범 1회", "지게차 접근 경고 1회"] },
-  { id: 2, name: "작업자 2", score: 95, violations: ["지게차 사각지대 진입 1회"] },
-  { id: 3, name: "작업자 3", score: 70, violations: ["크레인 파단음 구역 이탈 지연 1회", "사각지대 진입 2회"] },
-  { id: 4, name: "작업자 4", score: 60, violations: ["크레인 작업 반경 내 보행 2회", "교차로 지게차 충돌 경보 1회"] },
-  { id: 5, name: "작업자 5", score: 100, violations: [] }
+const initialWorkers: Worker[] = [
+  { id: 1, count: 0, created_at: '' },
+  { id: 2, count: 0, created_at: '' },
 ];
+
+const REPORT_SUMMARY_LIMIT = 200;
+const REPORT_POLL_INTERVAL_MS = 1_000;
+const REPORT_POLL_TIMEOUT_MS = 180_000;
+
+type ReportGenerationTiming = {
+  requestId: string;
+  targetDate: string;
+  startedAt: string;
+  clickToResponseMs: number;
+  responseToRenderMs: number;
+  clickToRenderMs: number;
+  reportId?: number;
+  htmlBytes: number;
+};
+
+declare global {
+  interface Window {
+    __pobigaReportMetrics?: ReportGenerationTiming[];
+  }
+}
+
+function makeRequestId(prefix: string) {
+  const randomId = window.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+  return `${prefix}-${Date.now()}-${randomId}`;
+}
+
+function getLocalDateString() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 export default function DailyAdminDashboard() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'records' | 'vibration'>('dashboard');
 
   // === 전역(Global) 상태 및 헤더(Top Panel) 연동 ===
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+  const [selectedDate, setSelectedDate] = useState(getLocalDateString());
 
   // 아코디언 열림/닫힘 관리를 위한 상태
   const [expandedProfileId, setExpandedProfileId] = useState<number | null>(null);
 
-  const [profiles, setProfiles] = useState(initialProfiles);
+  const [workers, setWorkers] = useState<Worker[]>(initialWorkers);
+  const [incidentSummary, setIncidentSummary] = useState<IncidentLogSummary | null>(null);
+  const [summaryStatus, setSummaryStatus] = useState<'loading' | 'ok' | 'error'>('loading');
+  const dailyCountByWorker = new Map(
+    incidentSummary?.workers.map((worker) => [worker.worker_id, worker]) ?? [],
+  );
+  const profiles = workers.map((worker) => {
+    const daily = dailyCountByWorker.get(worker.id);
+    const dailyCount = daily?.total ?? 0;
+    const score = Math.max(0, 100 - dailyCount * 8);
+    return {
+      id: worker.id,
+      name: `작업자 ${worker.id}`,
+      score,
+      count: dailyCount,
+      allTimeCount: worker.count,
+      warning: daily?.warning ?? 0,
+      danger: daily?.danger ?? 0,
+      violations: dailyCount > 0
+        ? [
+            `${selectedDate} 위험 알림 ${dailyCount}회`,
+            `Warning ${daily?.warning ?? 0}회 / Danger ${daily?.danger ?? 0}회`,
+            `전체 누적 ${worker.count}회`,
+          ]
+        : [],
+    };
+  });
+  const totalRiskCount = incidentSummary?.total ?? 0;
+  const totalWarningCount = incidentSummary?.warning ?? 0;
+  const totalDangerCount = incidentSummary?.danger ?? 0;
 
   // === 일자별 기록 뷰: 서버 리포트 연동 ===
-  const [reports, setReports] = useState<Report[]>([]);
+  const [reportSummaries, setReportSummaries] = useState<ReportSummary[]>([]);
+  const [reportSummariesLoaded, setReportSummariesLoaded] = useState(false);
   const [reportHtml, setReportHtml] = useState('');
   const [reportStatus, setReportStatus] = useState<'loading' | 'empty' | 'generating' | 'generate_no_data' | 'error' | 'ok'>('loading');
+  const pendingReportTimingRef = useRef<{
+    requestId: string;
+    targetDate: string;
+    startedAt: string;
+    clickStartMs: number;
+    responseEndMs: number;
+    reportId?: number;
+    htmlBytes: number;
+  } | null>(null);
 
   useEffect(() => {
+    fetchWorkers()
+      .then((data) => {
+        if (data.length > 0) {
+          setWorkers(data);
+        }
+      })
+      .catch(() => {
+        setWorkers(initialWorkers);
+      });
+
     if (USE_MOCK_DATA) {
       setReportStatus('ok');
       return;
     }
-    fetchReports()
+    setReportStatus('loading');
+    fetchReportSummaries(REPORT_SUMMARY_LIMIT)
       .then((data) => {
-        setReports(data);
-        const matched = data.find((r) => r.date === selectedDate);
-        if (matched) {
-          setReportHtml(matched.contents);
-          setReportStatus('ok');
-        } else {
-          setReportStatus('empty');
-        }
+        setReportSummaries(data);
+        setReportSummariesLoaded(true);
       })
       .catch(() => {
+        setReportSummariesLoaded(true);
         setReportStatus('error');
       });
   }, []);
+
+  useEffect(() => {
+    setSummaryStatus('loading');
+    fetchIncidentSummary(selectedDate)
+      .then((summary) => {
+        setIncidentSummary(summary);
+        setSummaryStatus('ok');
+      })
+      .catch(() => {
+        setIncidentSummary(null);
+        setSummaryStatus('error');
+      });
+  }, [selectedDate]);
 
   // 날짜 변경 시 해당 날짜 리포트로 전환
   useEffect(() => {
@@ -119,24 +218,88 @@ export default function DailyAdminDashboard() {
       setReportStatus('ok');
       return;
     }
-    const matched = reports.find((r) => r.date === selectedDate);
-    if (matched) {
-      setReportHtml(matched.contents);
-      setReportStatus('ok');
-    } else if (reports.length > 0 || reportStatus !== 'loading') {
-      setReportStatus('empty');
+    if (!reportSummariesLoaded) {
+      return;
     }
-  }, [selectedDate, reports]);
+
+    const matched = reportSummaries.find((r) => r.date === selectedDate);
+    if (!matched) {
+      setReportHtml('');
+      setReportStatus('empty');
+      return;
+    }
+
+    let cancelled = false;
+    setReportStatus('loading');
+    fetchReport(matched.id)
+      .then((report) => {
+        if (cancelled) return;
+        setReportHtml(report.contents);
+        setReportStatus('ok');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReportHtml('');
+        setReportStatus('error');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDate, reportSummaries, reportSummariesLoaded]);
 
   const handleGenerateReport = async () => {
+    const requestId = makeRequestId('report');
+    const targetDate = selectedDate;
+    const clickStartMs = performance.now();
+    const startedAt = new Date().toISOString();
     setReportStatus('generating');
     try {
-      const newReport = await generateReport(selectedDate);
-      setReports((prev) => [...prev, newReport]);
+      const job = await generateReportAsync(targetDate);
+      const deadlineMs = performance.now() + REPORT_POLL_TIMEOUT_MS;
+      let reportId: number | undefined;
+
+      while (performance.now() < deadlineMs) {
+        const status = await fetchJobStatus(job.job_id);
+        if (status.status === 'done') {
+          reportId = status.result?.report_id;
+          break;
+        }
+        if (status.status === 'failed') {
+          throw new Error(status.error || 'SERVER_ERROR');
+        }
+        await delay(REPORT_POLL_INTERVAL_MS);
+      }
+
+      if (!reportId) {
+        throw new Error('REPORT_TIMEOUT');
+      }
+
+      const newReport = await fetchReport(reportId);
+      const responseEndMs = performance.now();
+      const summaries = await fetchReportSummaries(REPORT_SUMMARY_LIMIT);
+      pendingReportTimingRef.current = {
+        requestId,
+        targetDate,
+        startedAt,
+        clickStartMs,
+        responseEndMs,
+        reportId: newReport.id,
+        htmlBytes: new Blob([newReport.contents]).size,
+      };
+      setReportSummaries(summaries);
+      setReportSummariesLoaded(true);
       setReportHtml(newReport.contents);
       setReportStatus('ok');
     } catch (e) {
-      if (e instanceof Error && e.message === 'NO_DATA') {
+      const failedAtMs = performance.now();
+      console.table({
+        requestId,
+        targetDate: selectedDate,
+        status: 'failed',
+        clickToFailureMs: Number((failedAtMs - clickStartMs).toFixed(2)),
+      });
+      if (e instanceof Error && (e.message === 'NO_DATA' || e.message.includes('No incident logs'))) {
         setReportStatus('generate_no_data');
       } else {
         setReportStatus('error');
@@ -146,17 +309,50 @@ export default function DailyAdminDashboard() {
 
   const reportRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (reportStatus !== 'ok' || !reportHtml || !pendingReportTimingRef.current) {
+      return;
+    }
+
+    const pending = pendingReportTimingRef.current;
+    pendingReportTimingRef.current = null;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const renderEndMs = performance.now();
+        const timing: ReportGenerationTiming = {
+          requestId: pending.requestId,
+          targetDate: pending.targetDate,
+          startedAt: pending.startedAt,
+          clickToResponseMs: Number((pending.responseEndMs - pending.clickStartMs).toFixed(2)),
+          responseToRenderMs: Number((renderEndMs - pending.responseEndMs).toFixed(2)),
+          clickToRenderMs: Number((renderEndMs - pending.clickStartMs).toFixed(2)),
+          reportId: pending.reportId,
+          htmlBytes: pending.htmlBytes,
+        };
+        window.__pobigaReportMetrics = [...(window.__pobigaReportMetrics ?? []), timing];
+        localStorage.setItem(
+          'pobigaReportMetrics',
+          JSON.stringify(window.__pobigaReportMetrics),
+        );
+        console.group('[Pobiga] report generation timing');
+        console.table(timing);
+        console.log('server metric request_id:', timing.requestId);
+        console.groupEnd();
+      });
+    });
+  }, [reportStatus, reportHtml]);
+
   // 아코디언 토글 함수
   const toggleAccordion = (id: number) => {
     setExpandedProfileId(prevId => (prevId === id ? null : id));
   };
 
   // 진동 수동 조작 기능 (서버 API 연동)
-  const handleVibration = async (makerId: string, direction: string) => {
+  const handleVibration = async (workerId: string, direction: string) => {
     try {
-      const result = await sendAlert(makerId, direction);
+      const result = await sendAlert(workerId, direction);
       if (result.status === 'success') {
-        alert(`[작업자 ${makerId}] '${direction}' 진동 신호 전송 성공`);
+        alert(`[작업자 ${workerId}] '${direction}' 진동 신호 전송 성공`);
       } else {
         alert(`진동 신호 전송 실패: ${JSON.stringify(result)}`);
       }
@@ -368,28 +564,33 @@ export default function DailyAdminDashboard() {
           {activeTab === 'dashboard' && (
             <div className="max-w-[1400px] mx-auto space-y-8 animate-in fade-in duration-500">
 
-              {/* 상단 3개 요약 스탯 카드 (4번째 카드 통신상태 삭제 후 grid-cols-3) */}
+              {/* 상단 3개 요약 스탯 카드 (선택 날짜 기준 DB 집계) */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-4">
-                    <p className="text-[15px] font-bold text-slate-500">일일 총 발생 위험</p>
+                    <p className="text-[15px] font-bold text-slate-500">선택 날짜 위험 로그</p>
                     <div className="bg-rose-50 p-3 rounded-xl text-rose-500"><AlertTriangle size={20} /></div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800">3<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <h3 className="text-4xl font-black text-slate-800">{totalRiskCount}<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <p className={`mt-3 text-xs font-bold ${summaryStatus === 'error' ? 'text-red-400' : 'text-slate-400'}`}>
+                    {summaryStatus === 'loading' ? 'DB 집계 동기화 중' : summaryStatus === 'error' ? 'DB 집계 조회 실패' : `${selectedDate} 기준`}
+                  </p>
                 </div>
                 <div className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-4">
-                    <p className="text-[15px] font-bold text-slate-500">크레인 이상</p>
-                    <div className="bg-purple-50 p-3 rounded-xl text-purple-600"><Zap size={20} /></div>
+                    <p className="text-[15px] font-bold text-slate-500">Warning</p>
+                    <div className="bg-amber-50 p-3 rounded-xl text-amber-600"><Zap size={20} /></div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800">2<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <h3 className="text-4xl font-black text-slate-800">{totalWarningCount}<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <p className="mt-3 text-xs font-bold text-slate-400">주의 단계 위험 예측</p>
                 </div>
                 <div className="bg-white rounded-[1.5rem] p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex justify-between items-start mb-4">
-                    <p className="text-[15px] font-bold text-slate-500">지게차 이상</p>
-                    <div className="bg-indigo-50 p-3 rounded-xl text-indigo-600"><Eye size={20} /></div>
+                    <p className="text-[15px] font-bold text-slate-500">Danger</p>
+                    <div className="bg-red-50 p-3 rounded-xl text-red-600"><Eye size={20} /></div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800">1<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <h3 className="text-4xl font-black text-slate-800">{totalDangerCount}<span className="text-xl font-bold text-slate-400 ml-1.5">건</span></h3>
+                  <p className="mt-3 text-xs font-bold text-slate-400">긴급 단계 위험 예측</p>
                 </div>
               </div>
 
@@ -475,8 +676,8 @@ export default function DailyAdminDashboard() {
 
                             <div className="flex items-center gap-4">
                               <div className={`px-5 py-2.5 rounded-xl flex items-center gap-2 font-black text-xl shadow-sm ${scoreBoxBg}`}>
-                                {profile.score}
-                                <span className="text-sm font-bold opacity-60">점</span>
+                                {profile.count}
+                                <span className="text-sm font-bold opacity-60">건</span>
                               </div>
                               <ChevronDown size={20} className={`text-slate-400 transition-transform duration-300 ${isExpanded ? 'rotate-180' : 'rotate-0'}`} />
                             </div>
@@ -487,7 +688,7 @@ export default function DailyAdminDashboard() {
                               }`}
                           >
                             <div className="p-5 bg-slate-50">
-                              <p className="text-sm font-bold text-slate-500 mb-3 px-1">위반 내역 상세</p>
+                              <p className="text-sm font-bold text-slate-500 mb-3 px-1">위험 알림 상세</p>
                               {profile.violations.length > 0 ? (
                                 <ul className="space-y-2">
                                   {profile.violations.map((v, i) => (
@@ -499,7 +700,7 @@ export default function DailyAdminDashboard() {
                                 </ul>
                               ) : (
                                 <div className="flex items-center gap-2 text-[14px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-4 py-3 rounded-xl">
-                                  <ShieldCheck size={18} /> 위반 내역이 없습니다 (안전 우수자)
+                                  <ShieldCheck size={18} /> {selectedDate} 위험 알림 없음 · 전체 누적 {profile.allTimeCount}회
                                 </div>
                               )}
                             </div>
@@ -735,14 +936,14 @@ export default function DailyAdminDashboard() {
                 </div>
 
                 <div className="flex flex-col space-y-4">
-                  {[1, 2, 3, 4, 5].map((id) => (
-                    <div key={id} className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl transition-colors duration-200 group">
+                  {profiles.map((profile) => (
+                    <div key={profile.id} className="flex flex-col md:flex-row md:items-center justify-between p-6 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl transition-colors duration-200 group">
                       <div className="flex items-center gap-5 mb-4 md:mb-0">
                         <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-200 overflow-hidden shrink-0 group-hover:scale-110 transition-transform">
                           <Radio size={20} className="text-slate-500 group-hover:text-purple-600 transition-colors" />
                         </div>
                         <div>
-                          <h4 className="text-lg font-black text-slate-800 tracking-tight">작업자 {id}</h4>
+                          <h4 className="text-lg font-black text-slate-800 tracking-tight">작업자 {profile.id}</h4>
                           <p className="text-[14px] font-bold text-slate-500 mt-0.5">
                             상태: <span className="text-emerald-500">정상 (Connected)</span>
                           </p>
@@ -758,7 +959,7 @@ export default function DailyAdminDashboard() {
                         ].map((dir) => (
                           <button
                             key={dir.value}
-                            onClick={() => handleVibration(String(id), dir.value)}
+                            onClick={() => handleVibration(String(profile.id), dir.value)}
                             className="px-5 py-3 min-w-[80px] rounded-xl text-[15px] font-bold text-slate-700 bg-white border border-slate-300 shadow-sm hover:text-white hover:bg-purple-600 hover:border-purple-600 hover:shadow-lg hover:shadow-purple-500/30 active:scale-95 active:bg-purple-700 transition-all duration-200"
                           >
                             {dir.label}

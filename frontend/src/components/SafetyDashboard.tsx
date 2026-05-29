@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   Menu, Search, Bell, MessageSquare, LayoutDashboard, Calendar, User, 
   ChevronDown, Activity, Calendar as CalendarIcon, Download

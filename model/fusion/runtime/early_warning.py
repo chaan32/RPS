@@ -17,8 +17,9 @@ AlertLevel = Literal["safe", "warning", "danger"]
 
 WARNING_TTC_SEC = 7.0
 WARNING_CLOSEST_DISTANCE_M = 1.2
-DANGER_TTC_SEC = 2.0
-DANGER_CLOSEST_DISTANCE_M = 0.8
+DANGER_TTC_SEC = 2.5
+# Treat the forklift/worker pair as physical bodies, not center points only.
+DANGER_CLOSEST_DISTANCE_M = 1.0
 PREDICTION_HORIZON_SEC = 8.0
 MIN_SPEED_MPS = 0.05
 MIN_HISTORY_POINTS = 5

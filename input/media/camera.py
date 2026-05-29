@@ -1,7 +1,7 @@
 """카메라 RTSP 연결 및 프레임 수집 모듈.
 
 VideoStream: 백그라운드 스레드에서 프레임을 계속 갱신하는 스트림 클래스.
-input/media/pipeline/runner.py 와 tools/show_dual_cam.py 등에서 공용으로 사용한다.
+input/media/pipeline/runner.py 와 tools/test/show_dual_cam.py 등에서 공용으로 사용한다.
 """
 
 import os
@@ -38,6 +38,7 @@ class VideoStream:
         self.frame = None
         self._lock = threading.Lock()
         self._stopped = False
+        self._thread: threading.Thread | None = None
 
     def _open(self, src: str):
         if src.isdigit():
@@ -45,7 +46,7 @@ class VideoStream:
         else:
             cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
-            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10000)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
 
@@ -59,7 +60,12 @@ class VideoStream:
             if self.ret and self.frame is not None:
                 break
             time.sleep(0.1)
-        threading.Thread(target=self._update, daemon=True).start()
+        self._thread = threading.Thread(
+            target=self._update,
+            name=f"VideoStream[{self.src}]",
+            daemon=False,
+        )
+        self._thread.start()
         return self
 
     def _update(self):
@@ -112,7 +118,15 @@ class VideoStream:
     def stop(self):
         """스레드 종료 + 카메라 연결 해제."""
         self._stopped = True
-        self.stream.release()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+        try:
+            self.stream.release()
+        except Exception:
+            pass
+        with self._lock:
+            self.ret = False
+            self.frame = None
 
 
 # ── API용 카메라 매니저 (현재 웹에서 미사용 — 필요 시 활성화) ─────────

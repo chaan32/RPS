@@ -1,0 +1,19 @@
+{
+  "class_accuracy": 0.9847992215682552,
+  "forklift": {
+    "danger_accuracy": 0.992168217201443,
+    "danger_precision": 0.959775967413442,
+    "danger_recall": 0.9563673262303399,
+    "danger_f1": 0.9580686149936468,
+    "support_danger": 3942,
+    "predicted_danger": 3928
+  },
+  "dropzone": {
+    "danger_accuracy": 0.9953009303208658,
+    "danger_precision": 0.9885818680063941,
+    "danger_recall": 0.988807674737323,
+    "danger_f1": 0.9886947584789311,
+    "support_danger": 8756,
+    "predicted_danger": 8758
+  }
+}

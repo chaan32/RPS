@@ -2,12 +2,12 @@
 Fusion 알림 → MQTT 발행.
 
 실제 아두이노 펌웨어 기준:
-  - 구독 토픽 : "forklift/4/vibration" (단일)
+  - 구독 토픽 : "worker/{id}/vibration"
   - 인식 payload: "left" / "back" / "right" / "all"
     (그 외 문자열은 "Unknown payload"로 무시됨)
 
 현재 정책: 충돌이 발생하면 위협 종류(forklift/dropzone) 무관하게
-무조건 forklift/4/vibration 토픽으로 "right" payload 를 발행한다.
+위험 PairRisk의 worker_id에 맞춰 작업자별 진동 토픽으로 payload 를 발행한다.
 
 사용:
   pred = FusionPrediction.from_model_output(risk_matrix)
@@ -29,12 +29,12 @@ from ..risk_output import (
     ThreatType,
     DANGER_THRESHOLD,
 )
+from .worker_ids import worker_label_to_topic_id
 
 
 # ── /send-alert HTTP 호출 (server 의 MQTT 발행 엔드포인트 경유) ──
-# 정책: 위험 판단되면 위협 종류 무관 maker_id=4, direction=back 으로 1회 호출.
 ALERT_SERVER_URL = os.getenv("FUSION_SERVER_URL", "http://127.0.0.1:1122")
-ALERT_MAKER_ID = "4"
+ALERT_WORKER_ID = "1"
 ALERT_DIRECTION = "back"
 
 
@@ -42,20 +42,22 @@ def publish_alert_via_server_sync(
     pred: FusionPrediction,
     threshold: float = DANGER_THRESHOLD,
     server_url: str | None = None,
-    maker_id: str = ALERT_MAKER_ID,
+    worker_id: str | None = None,
     direction: str = ALERT_DIRECTION,
     timeout: float = 3.0,
 ) -> list[dict]:
     """위험 감지 시 server /send-alert 1회 호출.
 
-    fusion 결과의 threat type(forklift/dropzone) 무관하게 고정 파라미터로 발행한다.
+    fusion 결과의 threat type(forklift/dropzone) 무관하게, 위험한 worker_id로 발행한다.
     realtime_camera 의 cooldown 은 호출 측(maybe_publish)이 처리하므로
     여기서는 has_alert 만 체크하고 바로 호출.
     """
-    if not pred.has_alert(threshold):
+    triggered = pred.triggered(threshold)
+    if not triggered:
         return []
     url = f"{(server_url or ALERT_SERVER_URL).rstrip('/')}/send-alert"
-    params = {"maker_id": maker_id, "direction": direction}
+    topic_worker_id = worker_id or worker_label_to_topic_id(triggered[0].worker_id, ALERT_WORKER_ID)
+    params = {"worker_id": topic_worker_id, "direction": direction}
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, params=params)
@@ -71,14 +73,9 @@ def publish_alert_via_server_sync(
 
 
 # ── 아두이노 펌웨어 기준 토픽/payload ──
-# 충돌이면 종류 무관 forklift/4/vibration 으로 "right" 단일 발행.
-DEFAULT_TOPIC = "forklift/4/vibration"
+# 충돌이면 종류 무관 작업자별 vibration 토픽으로 "right" 단일 발행.
 DEFAULT_DIRECTION = "right"
 
-DEFAULT_THREAT_TO_TOPIC = {
-    ThreatType.FORKLIFT: DEFAULT_TOPIC,
-    ThreatType.DROPZONE: DEFAULT_TOPIC,
-}
 DEFAULT_THREAT_TO_DIRECTION = {
     ThreatType.FORKLIFT: DEFAULT_DIRECTION,
     ThreatType.DROPZONE: DEFAULT_DIRECTION,
@@ -96,7 +93,7 @@ async def publish_vibration(
     단일 진동 명령 발행.
 
     Args:
-      topic     : 예) "forklift/4/vibration"
+      topic     : 예) "worker/1/vibration"
       direction : "left" / "back" / "right" / "all" (펌웨어가 인식하는 4종)
       broker    : None이면 .env 의 MQTT_BROKER 사용
     Returns:
@@ -120,9 +117,12 @@ async def publish_pair(
     broker: str | None = None,
 ) -> dict:
     """단일 PairRisk → MQTT 발행 (1회)."""
-    t2t = threat_to_topic or DEFAULT_THREAT_TO_TOPIC
     t2d = threat_to_direction or DEFAULT_THREAT_TO_DIRECTION
-    topic = t2t.get(pair.threat_type)
+    topic = (
+        threat_to_topic.get(pair.threat_type)
+        if threat_to_topic is not None
+        else pair.alert_topic
+    )
     direction = t2d.get(pair.threat_type)
     if topic is None or direction is None:
         return {
@@ -152,13 +152,16 @@ async def publish_prediction(
     threshold 이상 trigger 된 PairRisk만 추려 MQTT 발행.
     같은 (topic, direction) 조합은 한 번만 발행한다 (forklift/dropzone이 같은 토픽일 때 중복 방지).
     """
-    t2t = threat_to_topic or DEFAULT_THREAT_TO_TOPIC
     t2d = threat_to_direction or DEFAULT_THREAT_TO_DIRECTION
 
     results: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for p in prediction.triggered(threshold):
-        topic = t2t.get(p.threat_type)
+        topic = (
+            threat_to_topic.get(p.threat_type)
+            if threat_to_topic is not None
+            else p.alert_topic
+        )
         direction = t2d.get(p.threat_type)
         if topic is None or direction is None:
             results.append({
@@ -206,10 +209,9 @@ def _sanity_check():
 
     print("triggered pairs:")
     for p in pred.triggered():
-        topic = DEFAULT_THREAT_TO_TOPIC[p.threat_type]
         direction = DEFAULT_THREAT_TO_DIRECTION[p.threat_type]
         print(f"  {p.threat_type.value:8s} prob={p.prob:.2f} "
-              f"→ topic='{topic}'  payload='{direction}'")
+              f"→ topic='{p.alert_topic}'  payload='{direction}'")
 
     print("\n[publish] (실제 발행 시도)")
     results = publish_prediction_sync(pred, broker="127.0.0.1")

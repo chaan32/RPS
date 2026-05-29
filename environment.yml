@@ -15,6 +15,7 @@ dependencies:
     - greenlet==3.0.3 # SQLAlchemy async 
     - python-dotenv==1.0.1 # project Config
     - aiomqtt==2.3.0 # mqtt
+    - redis==5.0.8 # Redis background job queue
     - google-generativeai==0.8.3 # Gemini LLM API
     - httpx==0.28.1 # Ollama local LLM 호출
     - pydantic==2.7.4 # data validation

@@ -5,17 +5,15 @@ import os
 from aiomqtt import Client, MqttError
 
 
-async def publish_alert(maker_id: str, direction: str) -> dict:
-    """maker_id 에 맞는 토픽으로 direction 메시지를 MQTT 발행.
+async def publish_alert(worker_id: str, direction: str) -> dict:
+    """worker_id 에 맞는 토픽으로 direction 메시지를 MQTT 발행.
 
     topic 규칙:
-      - maker_id == '4' or '5' → forklift/{id}/vibration
-      - 그 외                  → crane/{id}/vibration
+      - worker/{id}/vibration
     """
     broker = os.getenv("MQTT_BROKER", "127.0.0.1")
-    topic = f"crane/{maker_id}/vibration"
-    if maker_id == "5" or maker_id == "4":
-        topic = f"forklift/{maker_id}/vibration"
+    topic_template = os.getenv("WORKER_ALERT_TOPIC_TEMPLATE", "worker/{worker_id}/vibration")
+    topic = topic_template.format(worker_id=worker_id)
     try:
         async with Client(broker, timeout=3) as client:
             await client.publish(topic, payload=direction)

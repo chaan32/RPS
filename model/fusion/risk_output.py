@@ -46,6 +46,26 @@ DEFAULT_FORKLIFT_ID = "Forklift_A"
 DEFAULT_DROPZONE_ID = "DropZone_A"
 
 
+def _worker_label_to_topic_id(worker_id: str | int) -> str:
+    """Internal labels like W01/worker_1 should publish to numeric worker topics."""
+    if isinstance(worker_id, int):
+        return str(worker_id)
+
+    text = str(worker_id).strip()
+    if not text:
+        return "1"
+
+    upper = text.upper()
+    if upper.startswith("W") and upper[1:].isdigit():
+        return str(int(upper[1:]))
+
+    lower = text.lower()
+    if lower.startswith("worker_") and lower.split("_", 1)[1].isdigit():
+        return str(int(lower.split("_", 1)[1]))
+
+    return text
+
+
 # ── Enums ──────────────────────────────────────────────────
 class RiskLevel(str, Enum):
     SAFE = "safe"
@@ -120,7 +140,7 @@ class PairRisk:
 
     @property
     def alert_topic(self) -> str:
-        return f"worker/{self.worker_id}/vibration"
+        return f"worker/{_worker_label_to_topic_id(self.worker_id)}/vibration"
 
     def is_triggered(self, threshold: float = DANGER_THRESHOLD) -> bool:
         return self.prob >= threshold
