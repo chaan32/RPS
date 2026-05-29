@@ -1,0 +1,4 @@
+endpoint,idle_count,idle_p50_ms,idle_p95_ms,busy_count,busy_p50_ms,busy_p95_ms,p50_delta_ms,p50_delta_pct,p95_delta_ms,p95_delta_pct,busy_errors
+workers,3138,19.119,50.893,3251,19.165,54.255,0.046,0.24,3.362,6.61,0
+incidents_postgres,2536,23.873,59.16,2565,23.904,61.979,0.031,0.13,2.819,4.77,0
+reports,3028,20.037,49.577,2923,20.383,54.269,0.346,1.73,4.692,9.46,0

@@ -1,0 +1,10 @@
+mode,scenario,runs,fps_mean,fps_min,fps_max,fps_stdev,loop_mean_ms,extract_pair_wall_mean_ms,pose_skipped_rate_mean,worker_detected_rate_mean,forklift_detected_rate_mean,prediction_rate_mean,issue_runs
+camera_parallel,scenario_01_user_current,5,9.423,9.029,9.695,0.287,106.058,103.245,0.4839,1.0,1.0,0.9878,
+camera_parallel,scenario_02_swapped_positions,5,7.962,7.689,8.269,0.237,125.529,122.699,0.382,1.0,0.956,0.9856,
+camera_parallel,scenario_03_opposite_worker,5,9.562,8.874,10.089,0.437,104.706,101.935,0.4988,1.0,1.0,0.988,
+model_parallel,scenario_01_user_current,5,10.664,10.407,10.905,0.192,93.649,90.813,0.4858,1.0,1.0,0.9893,
+model_parallel,scenario_02_swapped_positions,5,9.135,9.035,9.369,0.134,109.333,106.388,0.3883,1.0,0.9561,0.9875,
+model_parallel,scenario_03_opposite_worker,5,10.645,10.108,11.065,0.352,93.917,91.047,0.4987,1.0,1.0,0.9893,
+serial,scenario_01_user_current,5,5.679,5.605,5.763,0.07,176.767,173.539,0.4828,0.999,1.0,0.9788,
+serial,scenario_02_swapped_positions,5,4.876,4.755,5.088,0.136,205.639,202.191,0.3747,1.0,0.939,0.9765,
+serial,scenario_03_opposite_worker,5,5.774,5.664,5.846,0.075,173.371,170.108,0.4985,1.0,1.0,0.9801,

@@ -1,0 +1,28 @@
+{
+  "date": "2026-05-24",
+  "date_filter": true,
+  "iterations": 100,
+  "limit": 20,
+  "measurements": [
+    {
+      "backend": "postgres_direct",
+      "query": "",
+      "rows": 20,
+      "count": 100,
+      "avg_ms": 0.48,
+      "p50_ms": 0.097,
+      "p95_ms": 0.66,
+      "max_ms": 28.448
+    },
+    {
+      "backend": "elasticsearch_direct",
+      "query": "",
+      "rows": 20,
+      "count": 100,
+      "avg_ms": 5.376,
+      "p50_ms": 4.528,
+      "p95_ms": 7.96,
+      "max_ms": 70.134
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "date": null,
+  "date_filter": false,
+  "iterations": 50,
+  "limit": 20,
+  "measurements": [
+    {
+      "backend": "postgres_direct",
+      "query": "2026-05-24",
+      "rows": 20,
+      "count": 50,
+      "avg_ms": 99.034,
+      "p50_ms": 97.84,
+      "p95_ms": 102.36,
+      "max_ms": 120.536
+    },
+    {
+      "backend": "elasticsearch_direct",
+      "query": "2026-05-24",
+      "rows": 20,
+      "count": 50,
+      "avg_ms": 7.9,
+      "p50_ms": 6.624,
+      "p95_ms": 10.994,
+      "max_ms": 48.464
+    },
+    {
+      "backend": "incident-logs_search_postgres",
+      "rows": 20,
+      "count": 50,
+      "avg_ms": 53.152,
+      "p50_ms": 50.789,
+      "p95_ms": 61.816,
+      "max_ms": 126.458
+    },
+    {
+      "backend": "incident-logs_search_elasticsearch",
+      "rows": 20,
+      "count": 50,
+      "avg_ms": 19.547,
+      "p50_ms": 17.666,
+      "p95_ms": 23.137,
+      "max_ms": 69.149
+    }
+  ]
+}

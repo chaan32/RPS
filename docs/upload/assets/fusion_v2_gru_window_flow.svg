@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1040" viewBox="0 0 1800 1040">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="100%" stop-color="#f6f7fb"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" x2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" x2="1">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#db2777"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" x2="1">
+      <stop offset="0%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#84cc16"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" x2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .title{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:48px;font-weight:900;fill:#0f172a;letter-spacing:-0.4px}
+      .subtitle{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:20px;font-weight:600;fill:#475569}
+      .section{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:24px;font-weight:900;fill:#111827}
+      .label{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:19px;font-weight:850;fill:#111827}
+      .small{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:15px;font-weight:650;fill:#475569}
+      .tiny{font-family:Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif;font-size:13px;font-weight:700;fill:#64748b}
+      .mono{font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:15px;font-weight:700;fill:#334155}
+      .card{fill:#ffffff;stroke:#d8e2ed;stroke-width:2;rx:26;filter:url(#shadow)}
+      .soft{fill:#f8fafc;stroke:#dbe5ef;stroke-width:1.8;rx:20}
+      .arrow{stroke:#334155;stroke-width:4;fill:none;marker-end:url(#arrow);stroke-linecap:round}
+      .thin{stroke:#94a3b8;stroke-width:2;fill:none;stroke-linecap:round}
+      .dash{stroke:#94a3b8;stroke-width:2.5;stroke-dasharray:8 8;fill:none;stroke-linecap:round}
+      .white{fill:#ffffff}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1040" rx="42" fill="url(#bg)"/>
+  <circle cx="1560" cy="74" r="210" fill="#dbeafe" opacity="0.35"/>
+  <circle cx="170" cy="920" r="260" fill="#dcfce7" opacity="0.34"/>
+
+  <text x="82" y="82" class="title">Fusion V2 GRU Inference Flow</text>
+  <text x="84" y="120" class="subtitle">최근 24프레임의 BEV 좌표 feature window를 GRU가 읽고, sigmoid를 통해 forklift / dropzone 위험 확률로 변환하는 과정</text>
+
+  <g transform="translate(74 182)">
+    <rect class="card" width="448" height="660"/>
+    <text x="34" y="54" class="section">01. 24-Frame Sliding Window</text>
+    <text x="34" y="84" class="small">프레임마다 생성된 23개 feature를 최근 24개까지 누적</text>
+
+    <g transform="translate(42 126)">
+      <rect x="0" y="0" width="350" height="56" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+      <text x="22" y="35" class="mono">frame_1 = [x1, x2, ... x23]</text>
+    </g>
+    <g transform="translate(62 196)">
+      <rect x="0" y="0" width="350" height="56" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+      <text x="22" y="35" class="mono">frame_2 = [x1, x2, ... x23]</text>
+    </g>
+    <g transform="translate(82 266)">
+      <rect x="0" y="0" width="350" height="56" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+      <text x="22" y="35" class="mono">frame_3 = [x1, x2, ... x23]</text>
+    </g>
+
+    <text x="214" y="386" class="label">...</text>
+    <path d="M224 340 L224 412" class="dash"/>
+
+    <g transform="translate(42 438)">
+      <rect x="0" y="0" width="350" height="56" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+      <text x="22" y="35" class="mono">frame_24 = [x1, x2, ... x23]</text>
+    </g>
+
+    <g transform="translate(42 548)">
+      <rect width="364" height="70" rx="18" fill="#0f172a"/>
+      <text x="30" y="30" font-family="Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif" font-size="16" font-weight="850" fill="#f8fafc">Model Input Shape</text>
+      <text x="30" y="54" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16" font-weight="850" fill="#bfdbfe">(batch=1, time=24, features=23)</text>
+    </g>
+  </g>
+
+  <path d="M522 512 C565 512 572 512 612 512" class="arrow"/>
+
+  <g transform="translate(612 182)">
+    <rect class="card" width="320" height="660"/>
+    <text x="34" y="54" class="section">02. Preprocess</text>
+    <text x="34" y="84" class="small">학습 때 저장한 통계값으로 입력 분포를 맞춤</text>
+
+    <g transform="translate(36 148)">
+      <rect class="soft" width="248" height="120"/>
+      <circle cx="52" cy="60" r="32" fill="url(#blue)"/>
+      <text x="39" y="67" font-family="Inter,Arial" font-size="18" font-weight="900" fill="#fff">N</text>
+      <text x="102" y="48" class="label">Normalize</text>
+      <text x="102" y="76" class="mono">x = (x - mean) / std</text>
+    </g>
+
+    <path d="M160 290 L160 348" class="thin"/>
+
+    <g transform="translate(36 348)">
+      <rect class="soft" width="248" height="136"/>
+      <circle cx="52" cy="60" r="32" fill="url(#purple)"/>
+      <text x="37" y="67" font-family="Inter,Arial" font-size="18" font-weight="900" fill="#fff">23</text>
+      <text x="102" y="42" class="label">Input Projection</text>
+      <text x="102" y="70" class="small">Linear + LayerNorm + ReLU</text>
+      <text x="102" y="98" class="mono">23 dim → 96 dim</text>
+    </g>
+
+    <g transform="translate(36 542)">
+      <rect width="248" height="70" rx="18" fill="#f5f3ff" stroke="#ddd6fe" stroke-width="2"/>
+      <text x="28" y="30" class="small">각 프레임을 GRU가 읽기 좋은</text>
+      <text x="28" y="54" class="small">96차원 embedding으로 변환</text>
+    </g>
+  </g>
+
+  <path d="M932 512 C975 512 982 512 1022 512" class="arrow"/>
+
+  <g transform="translate(1022 182)">
+    <rect class="card" width="384" height="660"/>
+    <text x="34" y="54" class="section">03. GRU Sequence Encoding</text>
+    <text x="34" y="84" class="small">24프레임을 시간 순서대로 읽으며 hidden state에 이동 패턴 누적</text>
+
+    <g transform="translate(42 136)">
+      <rect x="0" y="0" width="82" height="82" rx="20" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+      <text x="23" y="48" class="label">h₁</text>
+      <text x="14" y="105" class="tiny">frame 1</text>
+    </g>
+    <g transform="translate(150 136)">
+      <rect x="0" y="0" width="82" height="82" rx="20" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+      <text x="23" y="48" class="label">h₂</text>
+      <text x="14" y="105" class="tiny">frame 2</text>
+    </g>
+    <g transform="translate(258 136)">
+      <rect x="0" y="0" width="82" height="82" rx="20" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+      <text x="20" y="48" class="label">h₃</text>
+      <text x="14" y="105" class="tiny">frame 3</text>
+    </g>
+    <path d="M126 176 L148 176" class="arrow"/>
+    <path d="M234 176 L256 176" class="arrow"/>
+
+    <text x="184" y="330" class="label">...</text>
+    <path d="M192 244 L192 362" class="dash"/>
+
+    <g transform="translate(150 390)">
+      <rect x="0" y="0" width="96" height="96" rx="24" fill="url(#green)" stroke="#047857" stroke-width="2"/>
+      <text x="23" y="57" font-family="Inter,Apple SD Gothic Neo,Pretendard,Arial,sans-serif" font-size="26" font-weight="900" fill="#fff">h₂₄</text>
+      <text x="-2" y="122" class="tiny">last hidden state</text>
+    </g>
+
+    <g transform="translate(42 540)">
+      <rect width="300" height="76" rx="18" fill="#ecfdf5" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="24" y="32" class="small">h₂₄ = 최근 24프레임의</text>
+      <text x="24" y="56" class="small">움직임 흐름을 압축한 96차원 벡터</text>
+    </g>
+  </g>
+
+  <path d="M1406 512 C1448 512 1456 512 1496 512" class="arrow"/>
+
+  <g transform="translate(1496 182)">
+    <rect class="card" width="230" height="660"/>
+    <text x="30" y="54" class="section">04. Head</text>
+    <text x="30" y="84" class="small">위험 logit 2개 생성</text>
+
+    <g transform="translate(30 150)">
+      <rect class="soft" width="170" height="110"/>
+      <text x="28" y="42" class="label">MLP Head</text>
+      <text x="28" y="72" class="mono">96 → 48 → 2</text>
+      <text x="28" y="94" class="tiny">Linear · ReLU · Dropout</text>
+    </g>
+
+    <path d="M115 282 L115 340" class="thin"/>
+
+    <g transform="translate(30 340)">
+      <rect width="170" height="104" rx="18" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+      <text x="24" y="38" class="label">Logits</text>
+      <text x="24" y="66" class="mono">[z_forklift,</text>
+      <text x="34" y="88" class="mono"> z_dropzone]</text>
+    </g>
+
+    <path d="M115 466 L115 524" class="thin"/>
+
+    <g transform="translate(30 524)">
+      <rect width="170" height="86" rx="18" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+      <text x="24" y="34" class="label">Sigmoid</text>
+      <text x="24" y="62" class="mono">p = 1/(1+e⁻ᶻ)</text>
+    </g>
+  </g>
+
+  <path d="M1612 842 C1612 884 1390 906 1124 906" class="arrow"/>
+
+  <g transform="translate(578 878)">
+    <rect class="card" width="684" height="112"/>
+    <text x="32" y="38" class="section">05. Output Probability → Risk Level</text>
+    <text x="34" y="72" class="mono">forklift_prob, dropzone_prob ∈ [0, 1]</text>
+    <text x="34" y="98" class="small">두 확률 중 필요한 위험 대상을 선택하거나 max score로 최종 위험 단계를 결정</text>
+  </g>
+
+  <g transform="translate(1310 872)">
+    <rect x="0" y="0" width="132" height="86" rx="22" fill="#ffffff" stroke="#16a34a" stroke-width="4"/>
+    <text x="34" y="36" class="label">SAFE</text>
+    <text x="30" y="62" class="mono">&lt; 0.4</text>
+  </g>
+  <g transform="translate(1466 872)">
+    <rect x="0" y="0" width="156" height="86" rx="22" fill="#ffffff" stroke="#f59e0b" stroke-width="4"/>
+    <text x="30" y="36" class="label">WARNING</text>
+    <text x="28" y="62" class="mono">0.4 ~ 0.8</text>
+  </g>
+  <g transform="translate(1646 872)">
+    <rect x="0" y="0" width="132" height="86" rx="22" fill="#ffffff" stroke="#dc2626" stroke-width="4"/>
+    <text x="22" y="36" class="label">DANGER</text>
+    <text x="30" y="62" class="mono">≥ 0.8</text>
+  </g>
+
+  <text x="1456" y="846" class="small">Threshold Mapping</text>
+  <path d="M1262 934 C1280 934 1286 916 1308 916" class="arrow"/>
+
+  <g transform="translate(86 902)">
+    <rect width="386" height="74" rx="22" fill="#e2e8f0"/>
+    <text x="28" y="32" class="small">핵심 요약</text>
+    <text x="28" y="56" class="small">24개 프레임을 하나의 window로 보고, 마지막 hidden state를 위험 확률 2개로 변환</text>
+  </g>
+</svg>

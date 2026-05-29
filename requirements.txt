@@ -1,5 +1,5 @@
 # Python 의존성 (운영 + 일부 도구).
-# Docker 이미지 빌드 + 로컬 venv 모두에서 사용.
+# Mac 로컬 venv 실행 기준으로 사용.
 # environment.yml 의 pip 섹션에서 추출 (학습/노트북 전용은 제외).
 
 # ── Web / API ─────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ ultralytics==8.4.38
 lap>=0.5.12
 
 # ── Audio / YAMNet ────────────────────────────────────────────────────
-# tensorflow >= 2.16 : Linux ARM64 (Apple Silicon Docker) wheel 제공 보장.
+# tensorflow >= 2.16 : ARM64 환경에서 CPU 변종 wheel 사용 가능.
 # ARM64 환경에서는 자동으로 CPU 변종 (CUDA 라이브러리 미포함).
 # x86_64 + GPU 환경이면 그대로 두면 GPU 라이브러리 자동 포함.
 tensorflow>=2.16.0

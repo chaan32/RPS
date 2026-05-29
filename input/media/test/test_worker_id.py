@@ -50,7 +50,7 @@ _aruco_params.adaptiveThreshWinSizeStep = 10
 _aruco_params.minMarkerPerimeterRate = 0.01
 _aruco_detector = cv2.aruco.ArucoDetector(_aruco_dict, _aruco_params)
 
-pose_model = YOLO("yolo11n-pose.pt")
+pose_model = YOLO(os.getenv("POSE_MODEL_PATH", "model/yolo/yolo11s-pose.pt"))
 
 
 def process_frame(frame, cam_id: str):

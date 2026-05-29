@@ -1,0 +1,62 @@
+{
+  "label": "backend_service_latency_after_summary_20260526",
+  "base_url": "http://127.0.0.1:1122",
+  "target_date": "2026-05-26",
+  "duration_s": 15.0,
+  "concurrency_per_endpoint": 4,
+  "total_requests": 6622,
+  "endpoints": {
+    "workers": {
+      "count": 1720,
+      "status_counts": {
+        "200": 1720
+      },
+      "errors": 0,
+      "min_ms": 8.381,
+      "mean_ms": 34.78,
+      "p50_ms": 24.848,
+      "p95_ms": 75.674,
+      "p99_ms": 154.314,
+      "max_ms": 390.354
+    },
+    "incidents_postgres": {
+      "count": 1481,
+      "status_counts": {
+        "200": 1481
+      },
+      "errors": 0,
+      "min_ms": 11.791,
+      "mean_ms": 40.381,
+      "p50_ms": 30.273,
+      "p95_ms": 79.652,
+      "p99_ms": 175.95,
+      "max_ms": 442.546
+    },
+    "reports": {
+      "count": 1780,
+      "status_counts": {
+        "200": 1780
+      },
+      "errors": 0,
+      "min_ms": 11.409,
+      "mean_ms": 33.597,
+      "p50_ms": 24.044,
+      "p95_ms": 72.936,
+      "p99_ms": 157.536,
+      "max_ms": 439.308
+    },
+    "reports_summary": {
+      "count": 1641,
+      "status_counts": {
+        "200": 1641
+      },
+      "errors": 0,
+      "min_ms": 6.389,
+      "mean_ms": 36.436,
+      "p50_ms": 25.889,
+      "p95_ms": 79.093,
+      "p99_ms": 157.01,
+      "max_ms": 445.977
+    }
+  }
+}

@@ -31,7 +31,13 @@ Unity 기반 공장 사각지대 시뮬레이션에서 cam1 / cam2 영상을 생
 
 아래 구조는 실제 CCTV RTSP 입력을 가정하되, 포트폴리오 검증 환경에서는 Unity에서 녹화한 cam1 / cam2 영상을 FFmpeg와 MediaMTX를 통해 RTSP 스트림으로 제공하도록 구성했습니다.
 
-![System Architecture](assets/readme/system_architecture_infra.png)
+### Overall Architecture
+
+![System Architecture Main](docs/upload/assets/system_architecture_main.png)
+
+### Detailed Processing Flow
+
+![System Architecture Sub](docs/upload/assets/system_architecture_sub.png)
 
 핵심 흐름은 다음과 같습니다.
 
@@ -268,24 +274,59 @@ React
 ```bash
 cd /Users/haechan/Desktop/pobiga/ai/ai_project
 conda activate venv
+cp .env.example .env
 ```
 
-### 2. Homography Calibration
+`.env`는 개인 로컬 실행값이고 Git에 올리지 않습니다. 기본 검증 환경은 Unity 녹화 영상을 `rtsp://localhost:8554/cam1`, `rtsp://localhost:8554/cam2`로 publish하는 구조입니다.
+
+필수로 확인할 값:
+
+```text
+DATABASE_URL=postgresql+asyncpg://...
+CAMERA_RTSP_URL_1=rtsp://localhost:8554/cam1
+CAMERA_RTSP_URL_2=rtsp://localhost:8554/cam2
+BEST_MODEL_PATH=model/yolo/best_forklift_box_colab.pt
+POSE_MODEL_PATH=model/yolo/yolo11s-pose.pt
+LLM_BACKEND=local
+OLLAMA_HOST=http://127.0.0.1:11434
+```
+
+### 2. Local Services
+
+터미널을 나누어 실행합니다.
+
+```bash
+brew services start postgresql@16
+brew services start mosquitto
+brew services start redis
+mediamtx
+```
+
+Ollama가 떠 있지 않으면 별도 터미널에서 실행합니다.
+
+```bash
+ollama serve
+```
+
+### 3. FastAPI Backend
+
+Realtime 추론 프로세스는 아래에서 직접 실행하므로, 서버가 자동으로 중복 실행하지 않게 `DISABLE_FUSION_SUBPROCESS=1`을 켭니다.
+
+```bash
+DISABLE_FUSION_SUBPROCESS=1 \
+python -m uvicorn server.main:app --host 127.0.0.1 --port 1122
+```
+
+### 4. Homography Calibration
 
 ```bash
 python input/media/calibrate_homography.py --cam cam1 --image calibration/test_cam1.jpg
 python input/media/calibrate_homography.py --cam cam2 --image calibration/test_cam2.jpg
 ```
 
-### 3. RTSP Bridge
+### 5. RTSP Bridge
 
-Terminal A:
-
-```bash
-mediamtx
-```
-
-Terminal B:
+MediaMTX가 실행 중인 상태에서 Unity 녹화 프레임을 RTSP로 publish합니다.
 
 ```bash
 python input/media/tools/stream_collision_scenario_rtsp.py \
@@ -293,7 +334,7 @@ python input/media/tools/stream_collision_scenario_rtsp.py \
   --rtsp-base rtsp://localhost:8554
 ```
 
-### 4. Realtime Fusion Pipeline
+### 6. Realtime Fusion Pipeline
 
 ```bash
 HEADLESS=1 \
@@ -302,10 +343,12 @@ CAMERA_RTSP_URL_2=rtsp://localhost:8554/cam2 \
 FUSION_SERVER_URL=http://127.0.0.1:1122 \
 MQTT_BROKER=127.0.0.1 \
 LOCAL_SNAPSHOT_PATH=/Users/haechan/Desktop/pobiga/ai/ai_project/snapshots \
-DETECTION_PARALLEL_MODE=model_parallel \
+EXTRACT_MODE=model_parallel \
+POSE_MODEL_PATH=model/yolo/yolo11s-pose.pt \
 POSE_IMGSZ=640 \
 CUSTOM_IMGSZ=512 \
 POSE_EVERY_N_FRAMES=2 \
+RISK_ENGINE=v2 \
 python -m model.fusion.runtime.realtime_camera \
   --no-audio \
   --no-prompt \
@@ -314,17 +357,7 @@ python -m model.fusion.runtime.realtime_camera \
   --metrics-path metrics/demo_run.jsonl
 ```
 
-### 5. FastAPI Backend
-
-API만 확인할 때는 Fusion subprocess를 끄고 실행할 수 있습니다.
-
-```bash
-DISABLE_FUSION_SUBPROCESS=1 \
-DISABLE_REDIS_JOBS=1 \
-conda run -n venv uvicorn server.main:app --host 127.0.0.1 --port 1122
-```
-
-### 6. Frontend
+### 7. Frontend
 
 ```bash
 cd frontend

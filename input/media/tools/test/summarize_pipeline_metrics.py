@@ -1,6 +1,6 @@
 """Summarize realtime_camera JSONL benchmark metrics.
 
-Use this after a Mac-only or Docker-only run to compare module-level latency.
+Use this after a Mac-only run to compare module-level latency.
 
 Example:
   python input/media/tools/test/summarize_pipeline_metrics.py \

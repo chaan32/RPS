@@ -1,0 +1,4 @@
+mode,runs,fps_mean,fps_min,fps_max,loop_mean_ms,extract_pair_wall_mean_ms,pose_skipped_rate_mean,worker_detected_rate_mean,forklift_detected_rate_mean,prediction_rate_mean
+serial,15,5.443,4.755,5.846,185.259,181.946,0.4520,1.000,0.980,0.978
+camera_parallel,15,8.982,7.689,10.089,112.098,109.293,0.4549,1.000,0.985,0.987
+model_parallel,15,10.148,9.035,11.065,98.966,96.083,0.4576,1.000,0.985,0.989

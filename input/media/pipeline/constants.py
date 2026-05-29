@@ -32,7 +32,7 @@ POSE_CONF_THRESHOLD = 0.01
 # 예: WORKER_WORLD_BOUNDS=none 또는 WORKER_WORLD_BOUNDS=-10,2,-2,9
 WORKER_WORLD_BOUNDS = (-10.5, 2.5, -2.0, 8.5)  # x_min, x_max, y_min, y_max
 
-# YOLO11n-pose 의 발목 keypoint 인덱스 (COCO 17 keypoint 규격).
+# YOLO11 pose 의 발목 keypoint 인덱스 (COCO 17 keypoint 규격).
 LEFT_ANKLE = 15
 RIGHT_ANKLE = 16
 

@@ -178,7 +178,7 @@
 - [ ] **E2. Uncertainty Estimation** *(1달)* — Bayesian DL, 신뢰도 함께 출력
 - [ ] **E3. TTC(Time-to-Collision) 예측** *(2주)*
 - [ ] **E4. Self-Supervised Pretraining** *(1~2달)* — Unity 데이터로 마스킹된 위치 예측
-- [ ] **E5. 오픈소스 공개** *(1주)* — GitHub + Docker Hub + 데모 영상
+- [ ] **E5. 오픈소스 공개** *(1주)* — GitHub + README + 데모 영상
 
 ---
 

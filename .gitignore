@@ -2,6 +2,8 @@
 
 # 보안/환경변수 
 .env
+.env.*
+!.env.example
 
 # 가상환경 폴더
 .venv/
@@ -27,6 +29,8 @@ Thumbs.db
 # ── 모델 가중치 / 학습 산출물
 # Ultralytics 사전학습 모델 (자동 다운로드되므로 커밋 불필요)
 **/yolo11n*.pt
+runs/
+model/yolo/runs/
 
 # YAMNet 학습 임베딩 캐시 (운영에서 미사용)
 model/yamnet/anomaly_embeddings.npy
@@ -40,13 +44,24 @@ snapshots/
 
 # ── 문서 / 다이어그램
 # 내부 작업용 — 깃에 올리지 않음
-docs/
+docs/*
+!docs/upload/
+!docs/upload/**
 
 # 성능 측정 로그 (Phase 1+ 누적)
 metrics/
+!benchmark/file/metrics/
+!benchmark/file/metrics/**
 
 # 유니티 시뮬레이션
 simulation/
 
 # 프론트엔드 빌드 산출물 제거
 frontend/dist/
+
+# 데이터셋 및 캐시 관련 항목
+*.zip
+benchmark/file/fusion_v2/*.npz
+__pycache__/
+.pytest_cache/
+.pio/

@@ -9,7 +9,7 @@ flow:
   3. worker IDs produced for BEV/fusion by pick_positions()
 
 Example:
-    POSE_MODEL_PATH=yolo11s-pose.pt \
+    POSE_MODEL_PATH=model/yolo/yolo11s-pose.pt \
     BEST_MODEL_PATH=model/yolo/best_forklift_box_colab.pt \
     python input/media/tools/test/check_two_worker_detection.py \
       --scenario scenario_01_user_current \

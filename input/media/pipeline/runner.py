@@ -43,7 +43,7 @@ def build_default_pipeline(
 ) -> DetectionPipeline:
     """env 기반으로 DetectionPipeline 인스턴스 생성."""
     return DetectionPipeline(
-        pose_model_path=os.getenv("POSE_MODEL_PATH", "yolo11n-pose.pt"),
+        pose_model_path=os.getenv("POSE_MODEL_PATH", "model/yolo/yolo11s-pose.pt"),
         custom_model_path=os.getenv("BEST_MODEL_PATH", "") or None,
         debug_aruco=os.getenv("DEBUG_ARUCO", "0") == "1",
         load_pose=load_pose,
@@ -81,9 +81,9 @@ def run_live(show: bool = True, interactive: bool = True) -> None:
     # 여기에서만 필요하기 때문에 여기서 임포트 
     from ..camera import VideoStream
 
-    # rtsp://mediamtx:8554/cam1
+    # rtsp://localhost:8554/cam1
     rtsp_1 = os.getenv("CAMERA_RTSP_URL_1")
-    # rtsp://mediamtx:8554/cam2
+    # rtsp://localhost:8554/cam2
     rtsp_2 = os.getenv("CAMERA_RTSP_URL_2")
     if not rtsp_1 or not rtsp_2:
         raise RuntimeError(".env 의 CAMERA_RTSP_URL_1, CAMERA_RTSP_URL_2 필요")

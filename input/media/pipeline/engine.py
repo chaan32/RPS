@@ -91,7 +91,7 @@ class DetectionPipeline:
     """프레임 → detection list 엔진.
 
     Args:
-        pose_model_path:    YOLO11n-pose 가중치 (사람 + 17 keypoint)
+        pose_model_path:    YOLO11 pose 가중치 (사람 + 17 keypoint)
         custom_model_path:  forklift / box_1 / box_2 검출 가중치 (None 이면 person 만)
         worker_aruco_map:   ArUco ID → worker_id 매핑 (default WORKER_ARUCO_MAP)
         world_match_radius_m / worker_state_ttl_s:
@@ -101,7 +101,7 @@ class DetectionPipeline:
 
     def __init__(
         self,
-        pose_model_path: str = "yolo11n-pose.pt",
+        pose_model_path: str = "model/yolo/yolo11s-pose.pt",
         custom_model_path: str | None = None,
         worker_aruco_map: dict[int, str] | None = None,
         world_match_radius_m: float = WORLD_MATCH_RADIUS_M,
@@ -111,7 +111,10 @@ class DetectionPipeline:
         load_custom: bool = True,
     ):
         # ── 모델 로드 ──
-        self.pose_model = YOLO(pose_model_path) if load_pose else None
+        pose_path = pose_model_path
+        if pose_path and not os.path.isabs(pose_path):
+            pose_path = str(PROJECT_ROOT / pose_path)
+        self.pose_model = YOLO(pose_path) if load_pose else None
 
         self.custom_model = None
         self.custom_names: dict[int, str] = {}
